@@ -1,2 +1,6 @@
 github.com/CryptOS-PKI/cryptos-node v0.0.0-20261005185256-442b136b0783 h1:cWhYcLFXSzbqkZuUsEdPdasWRY6mPTKFs9WpWh2HOac=
 github.com/CryptOS-PKI/cryptos-node v0.0.0-20261005185256-442b136b0783/go.mod h1:c3usodsgeF++zA6efQNclo0d1U3utURi3ylyGFAYw0Y=
+golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
+golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
