@@ -2,15 +2,16 @@
 # DRAFT — not yet executed. Validate on a Linux build host before relying on it.
 #
 # Assemble the read-only root filesystem tree and pack it as a SquashFS.
-# The tree holds the Go PID 1 (/init), cryptosctl, cryptos-console,
-# cryptos-install, and the static tools (cryptsetup, mkfs.ext4, sgdisk,
-# mkfs.vfat). The image carries no machine config; config reaches the node
-# via the ESP stage written by the installer.
+# The tree holds the Go PID 1 (/init), cryptosctl, cryptos-console, and the
+# static tools (cryptsetup, mkfs.ext4, sgdisk, mkfs.vfat). The image carries
+# no machine config; config reaches the node via the ESP stage written by the
+# installer. Installation itself runs inside init through internal/install;
+# cryptos-install is a separate dev-workstation CLI (task build), not part of
+# the rootfs.
 #
-# init, cryptosctl, cryptos-console and cryptos-install are built BY IMPORT
-# PATH from the cryptos-node module this repo's go.mod pins (the PKI engine
-# lives there; this repo builds and ships it). Output:
-# build/out/rootfs-<arch>.squashfs.
+# init, cryptosctl and cryptos-console are built BY IMPORT PATH from the
+# cryptos-node module this repo's go.mod pins (the PKI engine lives there;
+# this repo builds and ships it). Output: build/out/rootfs-<arch>.squashfs.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,8 +77,6 @@ GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w $buildinfo_ldfla
   -o "$tree/sbin/cryptosctl" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
 GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w $buildinfo_ldflags" \
   -o "$tree/sbin/cryptos-console" github.com/CryptOS-PKI/cryptos-node/cmd/cryptos-console
-GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w $buildinfo_ldflags" \
-  -o "$tree/sbin/cryptos-install" github.com/CryptOS-PKI/cryptos-node/cmd/cryptos-install
 
 # A static cryptsetup is required by internal/storage/luks (cryptos-node). By
 # default use the from-source musl-static build (build/cryptsetup/build.sh);
