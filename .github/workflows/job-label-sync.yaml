@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths: ['.github/labels.yml']
 permissions:
+  contents: read
   issues: write
 jobs:
   labeler:
