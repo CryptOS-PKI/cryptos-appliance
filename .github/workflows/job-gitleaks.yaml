@@ -1,0 +1,64 @@
+name: Gitleaks
+# Secret scan on EVERY push and PR -- no paths-ignore, because a secret can land
+# in any file, docs included. Hard failure: the scan exits non-zero on a finding.
+#
+# Runs the gitleaks CLI directly rather than gitleaks/gitleaks-action@v2: that
+# action requires a paid GITLEAKS_LICENSE for organization-owned repos, while the
+# CLI is free everywhere. This matches the `gitleaks detect` the repos already
+# run locally via `task lint`.
+on:
+  # push stays on every branch: this is the only secret scan, and a branch
+  # can be pushed long before it has a PR against main.
+  push:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+# One run per PR per workflow: a new push cancels the older PR run. Pushes to
+# main are never cancelled, so every main commit keeps a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  gitleaks:
+    name: 🔒 Gitleaks (secret scan)
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          VERSION="8.30.0"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Run Gitleaks
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The checkout fetches every branch, and gitleaks without --log-opts
+          # scans all of them (git log --all), so a finding on one branch would
+          # fail every run. Each run scans only its own commits: a PR its
+          # base..head, a push to main the whole of main (it holds only merged
+          # commits), and any other push what it adds on top of main.
+          if [ "$EVENT" = pull_request ]; then
+            range="$BASE..$HEAD"
+          elif [ "$REF" = refs/heads/main ]; then
+            range="--full-history HEAD"
+          else
+            range="origin/main..HEAD"
+          fi
+          echo "Scanning: git log $range"
+          # Honor a repo-local .gitleaks.toml if present. An array keeps the
+          # optional flag pair intact without word splitting.
+          args=(detect --source . --redact --verbose --no-banner --log-opts "$range")
+          if [ -f .gitleaks.toml ]; then args+=(--config .gitleaks.toml); fi
+          gitleaks "${args[@]}"
