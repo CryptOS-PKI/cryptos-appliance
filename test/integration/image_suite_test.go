@@ -83,8 +83,18 @@ const (
 	intRevPort    = "18080"
 	intACMEPort   = "18555"
 	intESTPort    = "18443"
+	intTSAPort    = "18318"
 	acmeFrontPort = "8443"
 	nginxPort     = "9443"
+
+	// tsaPolicyOID is the documentation PEN cryptos-node's own docs use as the
+	// example: IANA reserves 1.3.6.1.4.1.32473 for documentation.
+	tsaPolicyOID = "1.3.6.1.4.1.32473.1.1"
+	// tsaNTPServer is where the Intermediate finds its time once the TSA is
+	// on: a guest connection to it lands on the host's loopback, the same
+	// alias the node's http-01 fetch uses, where test/image/run.sh runs a
+	// local chrony reference server.
+	tsaNTPServer = "10.0.0.1"
 
 	nginxName       = "nginx.cryptos.test"
 	nginxContainer  = "cryptos-e2e-nginx"
@@ -600,21 +610,27 @@ pki:
 }
 
 type intProtocols struct {
-	acme, est     bool
-	eabKeyB64     string
-	estPassSHA256 string
+	acme, est, tsa bool
+	eabKeyB64      string
+	estPassSHA256  string
 }
 
 // intYAML is the Intermediate: TPM-held CA key, the Root pinned as its
 // parent, revocation published on the runner-reachable forward, and the
-// profiles the steps issue under. ACME and EST are rendered only when on.
+// profiles the steps issue under. ACME, EST and TSA are rendered only when
+// on; TSA also needs a time source, since its clock gate never opens
+// without one, so network.ntp_servers is added alongside it.
 func intYAML(adminPEM, rootPEM, hostIP string, p intProtocols) string {
 	var b strings.Builder
+	ntpServers := ""
+	if p.tsa {
+		ntpServers = fmt.Sprintf(", ntp_servers: [%s]", tsaNTPServer)
+	}
 	fmt.Fprintf(&b, `apiVersion: cryptos.dev/v1alpha1
 kind: MachineConfig
 metadata: {name: e2e-intermediate}
 role: {kind: intermediate}
-network: {interface: eth0, address: %s/24, gateway: 10.0.0.1, nameservers: [10.0.0.3]}
+network: {interface: eth0, address: %s/24, gateway: 10.0.0.1, nameservers: [10.0.0.3]%s}
 state_key: {mode: tpm}
 bootstrap:
   admin_cert_pem: |
@@ -659,7 +675,7 @@ pki:
       basic_constraints: {is_ca: false}
       key_usage: [digital_signature]
       ext_key_usage: [client_auth, server_auth]
-`, suiteNodeAddr, indentBlock(adminPEM, "    "), suiteIntCN, hostIP, intRevPort,
+`, suiteNodeAddr, ntpServers, indentBlock(adminPEM, "    "), suiteIntCN, hostIP, intRevPort,
 		indentBlock(rootPEM, "      "), acmeLeafProfile, hostIP)
 	if p.acme {
 		fmt.Fprintf(&b, `  acme:
@@ -680,6 +696,14 @@ pki:
       - username: %s
         password_sha256: %s
 `, estUser, p.estPassSHA256)
+	}
+	if p.tsa {
+		// allowed_networks is left empty: the request arrives through a
+		// QEMU hostfwd, and this suite does not control the source address
+		// the guest sees for a forwarded connection.
+		fmt.Fprintf(&b, `  tsa:
+    policy_oid: %q
+`, tsaPolicyOID)
 	}
 	return b.String()
 }
@@ -823,6 +847,7 @@ type suiteState struct {
 	nginxLeaf *x509.Certificate
 	backup    string
 	backupPwd string
+	tsaOn     bool
 }
 
 func TestImageSuite(t *testing.T) {
@@ -875,6 +900,8 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepUpgrade(t, s, st, st.root, suiteRootCN) })
 	s.step("image upgrade in place on the TPM Intermediate, then it still issues", []string{hier},
 		func(t *testing.T) { stepUpgrade(t, s, st, st.inter, suiteIntCN) })
+	s.step("TSA: enable RFC 3161 timestamping, request and verify a token, list the certificate", []string{hier},
+		func(t *testing.T) { stepTSA(t, s, st) })
 	s.step("protocol switch: ACME off, reboot pending, reboot, cleared", []string{protoOn},
 		func(t *testing.T) { stepProtocolsOff(t, s, st) })
 	s.step("console reset over the serial line, on a throwaway node", []string{"escrow: import the Root backup onto a fresh node"},
@@ -921,6 +948,7 @@ func stepIntermediate(t *testing.T, s *suite, st *suiteState) {
 		"hostfwd=tcp:" + s.env.hostIP + ":" + intRevPort + "-" + suiteNodeAddr + ":80",
 		"hostfwd=tcp:127.0.0.1:" + intACMEPort + "-" + suiteNodeAddr + ":8555",
 		"hostfwd=tcp:127.0.0.1:" + intESTPort + "-" + suiteNodeAddr + ":8443",
+		"hostfwd=tcp:127.0.0.1:" + intTSAPort + "-" + suiteNodeAddr + ":318",
 	}, cfg, st.admin)
 	st.inter.boot(t)
 	if status := st.inter.status(t); !strings.Contains(status, "Identity:        AWAITING_CERT") || !strings.Contains(status, "TPM:             OK") {
@@ -1175,10 +1203,14 @@ func stepRevocation(t *testing.T, s *suite, st *suiteState) {
 	note(t, "OCSP (POST and GET) and openssl ocsp say revoked, the CRL lists it, nginx drops the good staple, curl --cert-status refuses")
 }
 
+// intConfig renders the Intermediate's config for the given ACME/EST state.
+// TSA rides along once stepTSA has turned it on (st.tsaOn): a YAML apply
+// that omits a protocol's block switches it off, so every later apply must
+// keep repeating a protocol that is meant to stay on.
 func (st *suiteState) intConfig(s *suite, acme, est bool) string {
 	sum := sha256.Sum256([]byte(st.estPass))
 	return intYAML(st.adminPEM, st.rootPEM, s.env.hostIP, intProtocols{
-		acme: acme, est: est, eabKeyB64: st.eabKeyB64, estPassSHA256: hex.EncodeToString(sum[:]),
+		acme: acme, est: est, tsa: st.tsaOn, eabKeyB64: st.eabKeyB64, estPassSHA256: hex.EncodeToString(sum[:]),
 	})
 }
 
@@ -1219,6 +1251,112 @@ func stepProtocolsOn(t *testing.T, s *suite, st *suiteState) {
 		t.Fatalf("ACME directory: HTTP %d after the reboot", resp.StatusCode)
 	}
 	note(t, "pending shown after apply, cleared by the reboot")
+}
+
+// stepTSA switches the RFC 3161 time-stamp authority on, which also adds a
+// time source (tsaNTPServer, a local chrony reference server run.sh starts
+// on the host, reachable the way the node's own http-01 fetch reaches the
+// host) since the TSA's clock gate refuses every request until the clock has
+// synced this boot. It then asks for a token, verifies it against the
+// chain, and checks the signing certificate is the one cryptosctl lists.
+func stepTSA(t *testing.T, s *suite, st *suiteState) {
+	if status := st.inter.status(t); strings.Contains(status, "TSA on") {
+		t.Fatalf("TSA already on before the switch:\n%s", status)
+	}
+	st.tsaOn = true
+	out := applyConfig(t, st.inter, st.intConfig(s, true, true))
+	if !strings.Contains(out, "requires_reboot=true") {
+		t.Fatalf("config apply with TSA on: want requires_reboot=true:\n%s", out)
+	}
+	st.inter.reboot(t, suiteIntCN)
+	status := st.inter.status(t)
+	if !strings.Contains(status, "TSA on") || strings.Contains(status, "TSA on (not running") {
+		t.Fatalf("after the reboot, want TSA running:\n%s", status)
+	}
+	if !strings.Contains(status, "Clock:           SYNCED MACHINE_CONFIG "+tsaNTPServer) {
+		t.Fatalf("after the reboot, want the clock synced against the local NTP server:\n%s", status)
+	}
+
+	dir := filepath.Join(s.env.out, "tsa")
+	_ = os.MkdirAll(dir, 0o755)
+	artifact := filepath.Join(dir, "artifact.bin")
+	writeFile(t, artifact, []byte("cryptos e2e tsa artifact"))
+	reqPath := filepath.Join(dir, "req.tsq")
+	mustRun(t, "openssl", "ts", "-query", "-data", artifact, "-sha256", "-cert", "-out", reqPath)
+	reqBytes, err := os.ReadFile(reqPath)
+	if err != nil {
+		t.Fatalf("read the TSA request: %v", err)
+	}
+
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Post(
+		"http://127.0.0.1:"+intTSAPort+"/", "application/timestamp-query", bytes.NewReader(reqBytes))
+	if err != nil {
+		t.Fatalf("POST the TSA request: %v", err)
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read the TSA response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("TSA response: HTTP %d:\n%s", resp.StatusCode, respBody)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/timestamp-reply" {
+		t.Fatalf("TSA response Content-Type %q, want application/timestamp-reply", ct)
+	}
+	respPath := filepath.Join(dir, "resp.tsr")
+	writeFile(t, respPath, respBody)
+
+	text := mustRun(t, "openssl", "ts", "-reply", "-in", respPath, "-text")
+	if !strings.Contains(text, "Status: Granted.") {
+		t.Fatalf("TSA reply: want Status: Granted.:\n%s", text)
+	}
+	if !strings.Contains(text, "Policy OID: "+tsaPolicyOID) {
+		t.Fatalf("TSA reply: want policy %s:\n%s", tsaPolicyOID, text)
+	}
+
+	chainPath := filepath.Join(dir, "chain.pem")
+	writeFile(t, chainPath, append(pemBlock("CERTIFICATE", st.intCert.Raw), []byte(st.rootPEM)...))
+	if out, err := run(t, "", "openssl", "ts", "-verify", "-in", respPath, "-queryfile", reqPath, "-CAfile", chainPath); err != nil || !strings.Contains(out, "Verification: OK") {
+		t.Fatalf("openssl ts -verify: %v\n%s", err, out)
+	}
+
+	tokenPath := filepath.Join(dir, "token.der")
+	mustRun(t, "openssl", "ts", "-reply", "-in", respPath, "-token_out", "-out", tokenPath)
+	certsOut := mustRun(t, "openssl", "pkcs7", "-inform", "DER", "-in", tokenPath, "-print_certs")
+	var tsaCert *x509.Certificate
+	for _, c := range parsePEMCerts(t, []byte(certsOut)) {
+		if !c.IsCA {
+			tsaCert = c
+			break
+		}
+	}
+	if tsaCert == nil {
+		t.Fatalf("the token carries no end-entity certificate:\n%s", certsOut)
+	}
+	hasTimeStamping := false
+	for _, eku := range tsaCert.ExtKeyUsage {
+		if eku == x509.ExtKeyUsageTimeStamping {
+			hasTimeStamping = true
+		}
+	}
+	if !hasTimeStamping {
+		t.Fatalf("the TSA certificate lacks id-kp-timeStamping: %v", tsaCert.ExtKeyUsage)
+	}
+
+	list := st.inter.mustCtl(t, "tsa", "certificates")
+	serial := strings.ToLower(tsaCert.SerialNumber.Text(16))
+	listed := false
+	for _, line := range strings.Split(list, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && strings.ToLower(f[0]) == serial && f[1] == "yes" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatalf("cryptosctl tsa certificates does not list %s as current:\n%s", serial, list)
+	}
+	note(t, fmt.Sprintf("policy %s, certificate %s verified against the chain and listed current", tsaPolicyOID, serial))
 }
 
 func stepProtocolsOff(t *testing.T, s *suite, st *suiteState) {
