@@ -454,19 +454,204 @@ The key is the only thing that can produce an image your nodes will accept.
 ## Rotation
 
 > [!CAUTION]
-> Plan it as a physically attended, fleet-wide operation. On a `STATEKEY=tpm` node the `db` change alters PCR 7,
-> which the state key is sealed to, so on those nodes a rotation is a
-> re-provision today. If the old key was ever exposed, add its certificate to
-> `dbx`.
+> On a `STATEKEY=tpm` node, only steps 1 and 2 below are safe without a
+> re-provision. See the caution after step 2 for what steps 3 through 5 cost
+> on that mode, and what a re-provision there actually loses.
 
-CryptOS has no remote `db` update path. Moving to a new key means enrolling the
-new certificate in every machine's firmware, then building the next image with
-the new key and certificate so the new certificate becomes its anchor. The
-running node still checks that image against the **old** anchor, so its
-detached signature has to come from the old key. The build scripts do not do
-this; replace the `.sig` by hand after the build:
+Rotation does not need a reinstall. It needs one extra image, built so its
+*compiled-in anchor* moves to the new key before anything on the machine
+checks the new key's Authenticode signature. Call that extra image the
+**bridge**: it is signed, Authenticode and detached signature both, with the
+key already in every machine's `db`, so it stages and boots exactly like any
+other upgrade, with no firmware work first. Its anchor, though, is the new
+certificate -- so once it is running, the next image the node will accept has
+to carry the new key's detached signature.
+
+Work through it with two key pairs: the one already in the fleet
+(`sb-2026.key` / `sb-2026.crt`, already in `db`, already the running image's
+anchor) and the one you are rotating to (`sb-2027.key` / `sb-2027.crt` /
+`sb-2027.der`).
+
+### 1. Build the bridge
+
+`rootfs:build` stamps whatever `SB_CERT` is set to as the anchor;
+`uki:sign` signs the UKI and the detached signature with `SB_KEY` / `SB_CERT`.
+Run them as separate `task` invocations so the two can disagree -- one `task
+image` run cannot do this, since it uses the same environment throughout.
+`kernel:build` still needs the fleet's `PLATFORM` (it selects that platform's
+drivers; nothing about rotation changes that):
 
 ```bash
-openssl dgst -sha256 -sign /path/to/old/sb.key \
-  -out build/out/cryptos-amd64.uki.sig build/out/cryptos-amd64.uki
+export SB_CERT="$HOME/cryptos-sb/sb-2027.crt"   # the new cert becomes the anchor
+task kernel:build PLATFORM=vmware               # match the fleet's platform
+task cryptsetup:build
+task e2fsprogs:build
+task sgdisk:build
+task mkfsvfat:build
+task rootfs:build STATEKEY=nodeid
+task uki:assemble
+
+export SB_KEY="$HOME/cryptos-sb/sb-2026.key"    # Authenticode + detached sig: the OLD key
+export SB_CERT="$HOME/cryptos-sb/sb-2026.crt"
+task uki:sign
 ```
+
+> [!TIP]
+> `STATEKEY` here only sets the first-boot default this image would format a
+> brand-new node with -- an upgrade reads its mode from the state partition's
+> LUKS header and ignores it (see [State-key mode](image-upgrade.md#state-key-mode)).
+> It does not need to match the fleet for a rotation build; it would only
+> matter if this same image were later used to provision a node from scratch.
+
+Check what came out before shipping it, the same way as [step 5](#5-verify-the-build)
+-- but name the certificate explicitly. By the time you get here `$SB_CERT`
+is the 2026 certificate, so reusing it in the anchor check would check for
+the wrong one:
+
+```bash
+sbverify --list build/out/cryptos-amd64.uki   # names the 2026 certificate
+
+grep -q -a -F "$(openssl x509 -in "$HOME/cryptos-sb/sb-2027.crt" -outform DER | base64 -w0)" \
+  build/.work/rootfs-amd64/init && echo "anchor stamped (2027)"
+```
+
+### 2. Stage and activate the bridge
+
+```sh
+cryptosctl --endpoint pki-root.example.org:443 image stage \
+  --image build/out/cryptos-amd64.uki
+cryptosctl --endpoint pki-root.example.org:443 image activate \
+  --confirm "Example Root CA G1"
+```
+
+Nothing about `db` changes here. The bridge's Authenticode signature is the
+old key, already enrolled everywhere, and its detached signature verifies
+against the running node's current (2026) anchor like any ordinary upgrade.
+After the reboot, the node's compiled-in anchor is the 2027 certificate: the
+next image it will accept has to carry a detached signature from the new key.
+
+Record this image's digest now, before building anything else:
+
+```sh
+sha256sum build/out/cryptos-amd64.uki
+```
+
+`cryptosctl image status` only ever reports a raw SHA-256, with no label for
+which key built it. This is the only record of which digest is the bridge
+versus the real image from step 4, once both exist.
+
+> [!CAUTION]
+> **On a `STATEKEY=tpm` node, stop here unless a re-provision is acceptable.**
+> Steps 1 and 2 are safe: `db` has not changed, and the bridge's Authenticode
+> signature is still the key that verified the image before it, so PCR 7 --
+> which [holds only "for an image signed with the same Secure Boot
+> key"](image-upgrade.md#tpm-backed-nodes) -- does not move. Steps 3, 4 and 5
+> below each move it on a `tpm` node, and `image stage`'s reseal has no way
+> to follow: it copies the TPM's current PCR values into every sealed copy
+> and only overrides PCR 11, so a PCR 7 that will differ at the next boot is
+> never accounted for.
+>
+> - **Step 3** (enrolling the 2027 certificate into `db`) changes what `db`
+>   holds, which PCR 7 measures directly.
+> - **Step 4** (booting the image whose Authenticode is the 2027 key) moves
+>   PCR 7 again, independently of step 3: PCR 7 records which certificate in
+>   `db` verified the boot, not just what `db` contains, so switching which
+>   key verifies the boot changes it even with both certificates already
+>   enrolled.
+> - **Step 5** (removing the 2026 certificate, or adding it to `dbx`) changes
+>   `db` again, the same way step 3 does.
+>
+> Any one of those breaks the unseal at the next boot. The one way to rotate
+> on a `tpm` node without a re-provision is to keep shipping **split builds
+> indefinitely** -- Authenticode always the 2026 key, only the detached
+> signature and the anchor moving forward (a bridge of a bridge, and so on).
+> That rotates the upgrade anchor and nothing else: `db` and the Authenticode
+> key never move, so it does not help if the 2026 key itself was ever
+> exposed -- a reinstall is the only fix for that, on a `tpm` node. `nodeid`
+> and `kms` nodes do not need this workaround at all: steps 1 through 5 plus
+> `dbx` already move the Authenticode key and let the exposed certificate be
+> revoked, with no reinstall required.
+>
+> **What a re-provision costs on a `tpm` node:** it is not a reinstall that
+> keeps the CA. The state partition has one keyslot, opened only by the
+> TPM-sealed key -- there is no recovery passphrase to fall back to -- and CA
+> key export is refused on a `tpm` node by design, because a TPM-sealed key
+> is not portable. With no exported copy and no way to reopen the old
+> partition, re-provisioning means a **new** CA key and re-issuing everything
+> the old one signed, not a reinstall that carries the identity forward.
+> `nodeid` and `kms` nodes do not reseal anything and are not affected by any
+> of this: only `tpm` mode binds the state key to the booted image.
+
+### 3. Enroll the new certificate
+
+On a `STATEKEY=tpm` node, this is the step the caution above is about --
+read it before going further.
+
+Only now does any machine need firmware work: add `sb-2027.der` to `db`,
+the same way as [enrolling the first certificate](#3-enroll-the-certificate-secure-boot-on)
+(`sbctl enroll-keys --append`, or the firmware / ESXi steps) -- always
+appending, never replacing. Leave the 2026 certificate in `db`.
+
+> [!WARNING]
+> A node with Secure Boot on refuses to boot any image whose Authenticode
+> signature is not in `db`. At every point in this procedure, both ESP slots
+> -- active and previous -- have to hold images signed by a key `db` still
+> trusts, or an [`image rollback`](#if-it-goes-wrong) onto the previous slot
+> can leave the node with nothing bootable. That is why the 2026 certificate
+> stays in `db` past this step: the previous slot still holds a
+> 2026-Authenticode image (the bridge) until
+> one more upgrade lands.
+
+### 4. Build and stage the real image
+
+Build the 2027 image the ordinary way -- Authenticode, detached signature and
+anchor all from the same key, no split steps. `PLATFORM` still has to match
+the fleet:
+
+```bash
+export SB_KEY="$HOME/cryptos-sb/sb-2027.key"
+export SB_CERT="$HOME/cryptos-sb/sb-2027.crt"
+task image PLATFORM=vmware STATEKEY=nodeid
+```
+
+```sh
+cryptosctl --endpoint pki-root.example.org:443 image stage \
+  --image build/out/cryptos-amd64.uki
+cryptosctl --endpoint pki-root.example.org:443 image activate \
+  --confirm "Example Root CA G1"
+```
+
+Its detached signature verifies against the bridge's anchor (the 2027
+certificate), so `image stage` accepts it the same way it would any ordinary
+upgrade. Its Authenticode signature needs the 2027 certificate in `db`, which
+step 3 already added. After this activation, the previous slot holds the
+bridge (2026 Authenticode, 2027 anchor) and the active slot holds this image
+(2027 Authenticode, 2027 anchor). Record this image's digest too
+(`sha256sum build/out/cryptos-amd64.uki`), so `image status` afterward can
+tell it apart from the bridge's.
+
+### 5. Retire the old key
+
+The previous slot still holds the bridge, a 2026-Authenticode image, so
+leaving `sb-2026.crt` enrolled in `db` is not a loose end -- it is what keeps
+that slot bootable. Removing it is optional, and only safe once **neither**
+the active nor the previous digest in `cryptosctl image status` equals the
+bridge's sha256sum from step 2. Staging always moves the current active image
+into previous before writing the incoming one, so the bridge's digest does
+not sit in both slots at once -- after step 4 it is the previous digest; one
+more ordinary upgrade moves the step-4 image into previous instead, and only
+then has the bridge aged out of the ESP entirely. Once it has, remove
+`sb-2026.crt` from `db` on each machine, and add it to `dbx` instead if the
+key was ever exposed.
+
+### If it goes wrong
+
+[Rollback](image-upgrade.md#4-if-it-went-badly) works the same as any other
+upgrade: `cryptosctl image rollback` followed by `image activate` puts the
+retained image back. Rolling back from the real image (step 4) lands on the
+bridge, whose anchor is still the 2027 certificate, so staging the real image
+again afterward works without rebuilding anything. Rolling back from the
+bridge (step 2) lands on the pre-rotation image, whose anchor is the 2026
+certificate again -- rotation has to restart from a new bridge. Either way,
+per the warning in step 3, do not remove the 2026 certificate from `db` until
+you are done rolling back as well as rolling forward.
