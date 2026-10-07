@@ -567,7 +567,10 @@ versus the real image from step 4, once both exist.
 > signature and the anchor moving forward (a bridge of a bridge, and so on).
 > That rotates the upgrade anchor and nothing else: `db` and the Authenticode
 > key never move, so it does not help if the 2026 key itself was ever
-> exposed -- a reinstall is the only fix for that, on any `STATEKEY`.
+> exposed -- a reinstall is the only fix for that, on a `tpm` node. `nodeid`
+> and `kms` nodes do not need this workaround at all: steps 1 through 5 plus
+> `dbx` already move the Authenticode key and let the exposed certificate be
+> revoked, with no reinstall required.
 >
 > **What a re-provision costs on a `tpm` node:** it is not a reinstall that
 > keeps the CA. The state partition has one keyslot, opened only by the
@@ -576,7 +579,8 @@ versus the real image from step 4, once both exist.
 > is not portable. With no exported copy and no way to reopen the old
 > partition, re-provisioning means a **new** CA key and re-issuing everything
 > the old one signed, not a reinstall that carries the identity forward.
-> `nodeid` nodes do not reseal anything and are not affected by any of this.
+> `nodeid` and `kms` nodes do not reseal anything and are not affected by any
+> of this: only `tpm` mode binds the state key to the booted image.
 
 ### 3. Enroll the new certificate
 
@@ -630,12 +634,15 @@ tell it apart from the bridge's.
 
 The previous slot still holds the bridge, a 2026-Authenticode image, so
 leaving `sb-2026.crt` enrolled in `db` is not a loose end -- it is what keeps
-that slot bootable. Removing it is optional, and only safe once
-`cryptosctl image status` shows both the active and previous digests
-matching the sha256sum recorded for the real image in step 4, not the
-bridge's from step 2; push one more ordinary upgrade first if they do not
-match yet. Once they do, remove `sb-2026.crt` from `db` on each machine, and
-add it to `dbx` instead if the key was ever exposed.
+that slot bootable. Removing it is optional, and only safe once **neither**
+the active nor the previous digest in `cryptosctl image status` equals the
+bridge's sha256sum from step 2. Staging always moves the current active image
+into previous before writing the incoming one, so the bridge's digest does
+not sit in both slots at once -- after step 4 it is the previous digest; one
+more ordinary upgrade moves the step-4 image into previous instead, and only
+then has the bridge aged out of the ESP entirely. Once it has, remove
+`sb-2026.crt` from `db` on each machine, and add it to `dbx` instead if the
+key was ever exposed.
 
 ### If it goes wrong
 
