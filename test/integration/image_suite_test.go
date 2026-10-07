@@ -1288,29 +1288,40 @@ func stepTSA(t *testing.T, s *suite, st *suiteState) {
 		t.Fatalf("read the TSA request: %v", err)
 	}
 
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Post(
-		"http://127.0.0.1:"+intTSAPort+"/", "application/timestamp-query", bytes.NewReader(reqBytes))
-	if err != nil {
-		t.Fatalf("POST the TSA request: %v", err)
-	}
-	respBody, err := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if err != nil {
-		t.Fatalf("read the TSA response: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("TSA response: HTTP %d:\n%s", resp.StatusCode, respBody)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/timestamp-reply" {
-		t.Fatalf("TSA response Content-Type %q, want application/timestamp-reply", ct)
-	}
+	// The clock gate is reported synced in the status right after the reboot,
+	// but the TSA adapter's own view of that can lag a moment behind, so the
+	// very first request can still come back "time source is not available".
+	// Retry briefly rather than treat that as a hard failure.
 	respPath := filepath.Join(dir, "resp.tsr")
-	writeFile(t, respPath, respBody)
-
-	text := mustRun(t, "openssl", "ts", "-reply", "-in", respPath, "-text")
-	if !strings.Contains(text, "Status: Granted.") {
-		t.Fatalf("TSA reply: want Status: Granted.:\n%s", text)
-	}
+	var text string
+	eventually(t, "TSA request granted once the adapter sees the synced clock", 30*time.Second, func() (bool, string) {
+		resp, err := (&http.Client{Timeout: 10 * time.Second}).Post(
+			"http://127.0.0.1:"+intTSAPort+"/", "application/timestamp-query", bytes.NewReader(reqBytes))
+		if err != nil {
+			return false, fmt.Sprintf("POST the TSA request: %v", err)
+		}
+		respBody, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return false, fmt.Sprintf("read the TSA response: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return false, fmt.Sprintf("TSA response: HTTP %d:\n%s", resp.StatusCode, respBody)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/timestamp-reply" {
+			return false, fmt.Sprintf("TSA response Content-Type %q, want application/timestamp-reply", ct)
+		}
+		writeFile(t, respPath, respBody)
+		out, err := run(t, "", "openssl", "ts", "-reply", "-in", respPath, "-text")
+		if err != nil {
+			return false, fmt.Sprintf("openssl ts -reply: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "Status: Granted.") {
+			return false, out
+		}
+		text = out
+		return true, ""
+	})
 	if !strings.Contains(text, "Policy OID: "+tsaPolicyOID) {
 		t.Fatalf("TSA reply: want policy %s:\n%s", tsaPolicyOID, text)
 	}
