@@ -8,15 +8,17 @@
 #
 # This script stands up what the steps need around the VMs: a kind cluster
 # with cert-manager and Contour for the ACME step (the pins in
-# test/kind/versions.env), a coverage-instrumented cryptosctl, and one
-# /etc/hosts line so the node's http-01 fetch, which goes through QEMU's DNS
-# proxy to this host's resolver, lands on the cluster ingress. It then merges
-# the coverage counters the VMs and cryptosctl wrote.
+# test/kind/versions.env), a coverage-instrumented cryptosctl, one /etc/hosts
+# line so the node's http-01 fetch, which goes through QEMU's DNS proxy to
+# this host's resolver, lands on the cluster ingress, and a local chronyd the
+# TSA step syncs the Intermediate's clock against. It then merges the
+# coverage counters the VMs and cryptosctl wrote.
 #
 # Linux only. It skips (exit 0) when the host is not Linux or lacks docker,
-# qemu, swtpm or OVMF, and fails on anything else. Needs: docker, curl,
-# sha256sum, go, openssl, qemu-system-x86_64, swtpm, sgdisk, mtools, OVMF,
-# and sudo for the /etc/hosts line (added and removed here).
+# qemu, swtpm, chronyd or OVMF, and fails on anything else. Needs: docker,
+# curl, sha256sum, go, openssl, qemu-system-x86_64, swtpm, sgdisk, mtools,
+# chrony, OVMF, and sudo for the /etc/hosts line and chronyd (added and
+# removed here).
 #
 # Environment:
 #   E2E_IMAGE_UKI   the UKI to boot (default build/out/cryptos-amd64-e2e.uki;
@@ -58,7 +60,7 @@ skip() {
 [ "$(uname -m)" = "x86_64" ] || skip "the suite boots the amd64 image; this host is $(uname -m)"
 command -v docker >/dev/null 2>&1 || skip "docker is not installed"
 docker info >/dev/null 2>&1 || skip "the docker daemon is not reachable (is it running, and can this user use it?)"
-for tool in qemu-system-x86_64 swtpm sgdisk mformat mcopy; do
+for tool in qemu-system-x86_64 swtpm sgdisk mformat mcopy chronyd; do
   command -v "$tool" >/dev/null 2>&1 || skip "$tool is not installed"
 done
 ovmf_code="${OVMF_CODE:-}"
@@ -130,6 +132,8 @@ kubectl() { "$kubectl_bin" --kubeconfig "$kubeconfig" "$@"; }
 # ---- teardown --------------------------------------------------------------
 
 added_hosts=0
+chrony_conf=""
+chrony_pid=""
 # shellcheck disable=SC2329 # run by the EXIT trap below
 cleanup() {
   local rc=$?
@@ -137,6 +141,11 @@ cleanup() {
     log "removing the $hostname line from /etc/hosts"
     sudo sed -i "/$hosts_marker\$/d" /etc/hosts || true
   fi
+  if [ -n "$chrony_pid" ] && sudo test -f "$chrony_pid"; then
+    sudo kill "$(sudo cat "$chrony_pid")" >/dev/null 2>&1 || true
+  fi
+  [ -n "$chrony_pid" ] && sudo rm -f "$chrony_pid" || true
+  [ -n "$chrony_conf" ] && sudo rm -f "$chrony_conf" || true
   docker rm -f cryptos-e2e-nginx >/dev/null 2>&1 || true
   if [ "${KEEP_CLUSTER:-0}" = 1 ]; then
     log "KEEP_CLUSTER=1: leaving cluster $cluster up (kubeconfig: $kubeconfig)"
@@ -165,6 +174,43 @@ if ! grep -qE "^[^#]*[[:space:]]$hostname([[:space:]]|\$)" /etc/hosts; then
   added_hosts=1
   log "added $guest_host_ip $hostname to /etc/hosts"
 fi
+
+# ---- a local time source for the TSA ----------------------------------------
+
+# The RFC 3161 TSA step switches on pki.tsa, whose clock gate refuses every
+# request until the Intermediate's clock has synced this boot. chronyd
+# answers as a stratum-1 reference clock with no upstream of its own, so the
+# sync needs no network egress and nothing to flake on. A guest connection to
+# $guest_host_ip lands on this host's loopback, the same path the node's
+# http-01 fetch uses, so the VM reaches it on the standard NTP port with no
+# forward to add. QEMU's user-mode networking rewrites the source address of
+# that connection to 127.0.0.1 on the way in, so chronyd's allow list has to
+# match the loopback address, not the guest's own 10.0.0.0/24 range.
+#
+# The config and pidfile live under /etc/chrony and /run/chrony rather than
+# the $work tmpdir: the distro's chronyd AppArmor profile
+# (/etc/apparmor.d/usr.sbin.chronyd) confines it to those paths (plus a
+# handful of other fixed locations) and denies everything under /tmp.
+chrony_conf="/etc/chrony/chrony-e2e.conf"
+chrony_pid="/run/chrony/chrony-e2e.pid"
+# chronyd runs as root here (no "user" directive) and would otherwise create
+# /run/chrony itself on a mode of its own choosing; pre-create it so the
+# unprivileged polling below can always traverse it.
+sudo install -d -m 0755 /run/chrony
+sudo tee "$chrony_conf" >/dev/null <<EOF
+port 123
+cmdport 0
+local stratum 1
+allow 127.0.0.1
+pidfile $chrony_pid
+EOF
+sudo chronyd -f "$chrony_conf"
+for _ in $(seq 1 50); do
+  sudo test -f "$chrony_pid" && break
+  sleep 0.1
+done
+sudo test -f "$chrony_pid" || { log "chronyd did not write $chrony_pid"; exit 1; }
+log "chronyd serving a local reference clock on UDP 123 (pid $(sudo cat "$chrony_pid"))"
 
 # ---- cluster ---------------------------------------------------------------
 

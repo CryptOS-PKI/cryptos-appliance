@@ -4,9 +4,10 @@ name: Full-image suite (QEMU Root and Intermediate)
 # Intermediate on a GitHub-hosted runner and runs the suite of named steps in
 # test/integration/image_suite_test.go against them over the mTLS API:
 # ceremony, sign-subordinate, leaves, nginx with OCSP stapling, revocation,
-# the protocol switch, ACME with cert-manager in kind, EST, re-certify, escrow
-# and the console reset. Each step's result and the coverage the run reached
-# go into the job summary. See test/image/run.sh.
+# the protocol switch, ACME with cert-manager in kind, EST, the RFC 3161 TSA
+# against a local chronyd, re-certify, escrow and the console reset. Each
+# step's result and the coverage the run reached go into the job summary.
+# See test/image/run.sh.
 #
 # Slow, so not on every pull request: nightly, on pull requests that touch
 # the image build, the boot or the protocol and config code, and on manual
@@ -164,14 +165,15 @@ jobs:
             echo "KVM: not available on this runner; the VMs run under TCG" >>"$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Install QEMU, swtpm, OVMF and mtools
+      - name: Install QEMU, swtpm, OVMF, mtools and chrony
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools mtools gdisk
+            qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools mtools gdisk chrony
           qemu-system-x86_64 --version | head -1
           swtpm --version
+          chronyd --version
 
       - name: Cache kind, kubectl and manifests
         uses: actions/cache@v4
