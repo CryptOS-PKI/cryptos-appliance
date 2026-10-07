@@ -132,6 +132,7 @@ kubectl() { "$kubectl_bin" --kubeconfig "$kubeconfig" "$@"; }
 # ---- teardown --------------------------------------------------------------
 
 added_hosts=0
+chrony_conf=""
 chrony_pid=""
 # shellcheck disable=SC2329 # run by the EXIT trap below
 cleanup() {
@@ -140,9 +141,11 @@ cleanup() {
     log "removing the $hostname line from /etc/hosts"
     sudo sed -i "/$hosts_marker\$/d" /etc/hosts || true
   fi
-  if [ -n "$chrony_pid" ] && [ -f "$chrony_pid" ]; then
-    sudo kill "$(cat "$chrony_pid")" >/dev/null 2>&1 || true
+  if [ -n "$chrony_pid" ] && sudo test -f "$chrony_pid"; then
+    sudo kill "$(sudo cat "$chrony_pid")" >/dev/null 2>&1 || true
   fi
+  [ -n "$chrony_pid" ] && sudo rm -f "$chrony_pid" || true
+  [ -n "$chrony_conf" ] && sudo rm -f "$chrony_conf" || true
   docker rm -f cryptos-e2e-nginx >/dev/null 2>&1 || true
   if [ "${KEEP_CLUSTER:-0}" = 1 ]; then
     log "KEEP_CLUSTER=1: leaving cluster $cluster up (kubeconfig: $kubeconfig)"
@@ -181,9 +184,18 @@ fi
 # $guest_host_ip lands on this host's loopback, the same path the node's
 # http-01 fetch uses, so the VM reaches it on the standard NTP port with no
 # forward to add.
-chrony_conf="$work/chrony-e2e.conf"
-chrony_pid="$work/chrony-e2e.pid"
-cat >"$chrony_conf" <<EOF
+#
+# The config and pidfile live under /etc/chrony and /run/chrony rather than
+# the $work tmpdir: the distro's chronyd AppArmor profile
+# (/etc/apparmor.d/usr.sbin.chronyd) confines it to those paths (plus a
+# handful of other fixed locations) and denies everything under /tmp.
+chrony_conf="/etc/chrony/chrony-e2e.conf"
+chrony_pid="/run/chrony/chrony-e2e.pid"
+# chronyd runs as root here (no "user" directive) and would otherwise create
+# /run/chrony itself on a mode of its own choosing; pre-create it so the
+# unprivileged polling below can always traverse it.
+sudo install -d -m 0755 /run/chrony
+sudo tee "$chrony_conf" >/dev/null <<EOF
 port 123
 cmdport 0
 local stratum 1
@@ -192,11 +204,11 @@ pidfile $chrony_pid
 EOF
 sudo chronyd -f "$chrony_conf"
 for _ in $(seq 1 50); do
-  [ -f "$chrony_pid" ] && break
+  sudo test -f "$chrony_pid" && break
   sleep 0.1
 done
-[ -f "$chrony_pid" ] || { log "chronyd did not write $chrony_pid"; exit 1; }
-log "chronyd serving a local reference clock on UDP 123 (pid $(cat "$chrony_pid"))"
+sudo test -f "$chrony_pid" || { log "chronyd did not write $chrony_pid"; exit 1; }
+log "chronyd serving a local reference clock on UDP 123 (pid $(sudo cat "$chrony_pid"))"
 
 # ---- cluster ---------------------------------------------------------------
 
