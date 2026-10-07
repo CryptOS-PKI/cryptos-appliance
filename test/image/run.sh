@@ -183,7 +183,9 @@ fi
 # sync needs no network egress and nothing to flake on. A guest connection to
 # $guest_host_ip lands on this host's loopback, the same path the node's
 # http-01 fetch uses, so the VM reaches it on the standard NTP port with no
-# forward to add.
+# forward to add. QEMU's user-mode networking rewrites the source address of
+# that connection to 127.0.0.1 on the way in, so chronyd's allow list has to
+# match the loopback address, not the guest's own 10.0.0.0/24 range.
 #
 # The config and pidfile live under /etc/chrony and /run/chrony rather than
 # the $work tmpdir: the distro's chronyd AppArmor profile
@@ -199,7 +201,7 @@ sudo tee "$chrony_conf" >/dev/null <<EOF
 port 123
 cmdport 0
 local stratum 1
-allow 10.0.0.0/24
+allow 127.0.0.1
 pidfile $chrony_pid
 EOF
 sudo chronyd -f "$chrony_conf"
