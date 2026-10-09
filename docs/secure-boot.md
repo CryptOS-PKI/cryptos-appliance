@@ -333,7 +333,7 @@ Outputs in `build/out/`:
 | `cryptos-amd64.uki.unsigned` | the assembled UKI before signing |
 | `cryptos-amd64.uki` | the signed UKI (anchor inside, Authenticode signature on it) |
 | `cryptos-amd64.uki.sig` | the detached signature `image stage` checks |
-| `cryptos-amd64-vmware-nodeid.iso` | the installer ISO (`task iso` only; `-nodeid` is omitted for `STATEKEY=tpm`) |
+| `cryptos-amd64-vmware-nodeid-<build>.iso` | the installer ISO (`task iso` only; `-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
 ## 5. Verify the build
 
@@ -405,15 +405,17 @@ task iso:unsigned PLATFORM=vmware STATEKEY=nodeid
 | File | What it is |
 |---|---|
 | `cryptos-amd64.uki.unsigned` | the UKI, no Authenticode signature, no anchor |
-| `cryptos-amd64-vmware-nodeid-unsigned.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`) |
+| `cryptos-amd64-vmware-nodeid-unsigned-<build>.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
 This is how the public release assets are built. On a `v*` tag, CI runs
 `task iso:unsigned` for `STATEKEY=tpm` and `STATEKEY=nodeid` with no Secure
 Boot variables set, and attaches the UKIs (renamed
-`cryptos-amd64-vmware[-nodeid].uki.unsigned`), the ISOs, `cryptosctl` for
-linux and darwin on amd64 and arm64, and a `SHA256SUMS`. The per-run key the CI
-smoke build uses on `main` signs and anchors only images that are thrown away
-with the run; none of them is uploaded.
+`cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned`), the ISOs, `cryptosctl`
+for linux and darwin on amd64 and arm64 (each also named with `<build>`), a
+`build-manifest.json` build record (the full and short commit, dirty state,
+version and build tag), and a `SHA256SUMS`. The per-run key the CI smoke build
+uses on `main` signs and anchors only images that are thrown away with the
+run; none of them is uploaded.
 
 Check that a build carries no anchor with the grep from step 5 against your own
 certificate, or, without one, by looking for any base64 X.509 certificate in
