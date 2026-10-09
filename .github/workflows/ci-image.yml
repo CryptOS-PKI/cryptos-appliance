@@ -193,6 +193,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          # The build-number tag every artifact file name carries; the ISO
+          # already has it baked in by build/iso/build.sh, so this just
+          # reconstructs the same name to copy from and names the UKI copy.
+          build_tag="$(bash build/ci/artifact-name.sh)"
           for statekey in tpm nodeid; do
             suffix=""
             [ "$statekey" = nodeid ] && suffix="-nodeid"
@@ -212,22 +216,30 @@ jobs:
               exit 1
             fi
 
-            cp "$uki" "dist/cryptos-${ARCH}-${PLATFORM}${suffix}.uki.unsigned"
-            cp "build/out/cryptos-${ARCH}-${PLATFORM}${suffix}-unsigned.iso" dist/
+            cp "$uki" "dist/cryptos-${ARCH}-${PLATFORM}${suffix}-${build_tag}.uki.unsigned"
+            cp "build/out/cryptos-${ARCH}-${PLATFORM}${suffix}-unsigned-${build_tag}.iso" dist/
           done
 
       # cryptosctl for operator workstations, stamped with the same build
-      # identity as the image (build/ci/buildinfo.sh).
+      # identity as the image (build/ci/buildinfo.sh) and the same build-number
+      # tag as the image artifacts (build/ci/artifact-name.sh).
       - name: Cross-build cryptosctl
         run: |
           set -euo pipefail
           ldflags="-s -w $(bash build/ci/buildinfo.sh)"
+          build_tag="$(bash build/ci/artifact-name.sh)"
           for os in linux darwin; do
             for cpu in amd64 arm64; do
               CGO_ENABLED=0 GOOS="$os" GOARCH="$cpu" go build -trimpath \
-                -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
+                -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}-${build_tag}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
             done
           done
+
+      - name: Write the build record
+        run: |
+          set -euo pipefail
+          build/ci/build-manifest.sh dist/* > dist/build-manifest.json
+          cat dist/build-manifest.json
 
       - name: Write SHA256SUMS
         run: |

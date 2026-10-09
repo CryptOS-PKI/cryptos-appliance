@@ -17,7 +17,7 @@ versions.env ──> kernel/build.sh      ─> out/vmlinuz-<arch>
                  squashfs/build.sh     ─> out/rootfs-<arch>.squashfs  (+ rootfs tree)
                  uki/assemble.sh       ─> out/cryptos-<arch>.uki.unsigned
                  uki/sign.sh           ─> out/cryptos-<arch>.uki      (Secure Boot signed)
-                 iso/build.sh          ─> out/cryptos-<arch>-<platform>[-nodeid][-unsigned].iso
+                 iso/build.sh          ─> out/cryptos-<arch>-<platform>[-nodeid][-unsigned]-<build>.iso
 ```
 
 Driven by the `Taskfile.yml` targets:
@@ -108,6 +108,21 @@ git metadata the build still succeeds but reports version `dev` and an
 go build -ldflags "-s -w $(build/ci/buildinfo.sh)" ./cmd/cryptosctl
 ```
 
+## Artifact file names
+
+Every published artifact (the ISO, the `dist/` UKI copy, the `cryptosctl` binaries) carries the
+build number in its file name: a git-describe style tag from `build/ci/artifact-name.sh`
+(`<version>-g<shortsha>`, `-dirty` for a modified tree), so two builds never collide on name and
+`SHA256SUMS` always ties a file back to the exact commit:
+
+```bash
+build/ci/artifact-name.sh        # e.g. v0.1.0-5-ga1b2c3d, or ga1b2c3d with no tags yet
+```
+
+`build/ci/build-manifest.sh <artifact>...` writes the build record alongside the release assets
+(`dist/build-manifest.json`): the full commit, the short commit, dirty state, the version, the
+build tag, and the artifact file names.
+
 ## Rootfs delivery
 
 `uki/assemble.sh` defaults to `ROOTFS_MODE=squashfs` (the spec target): a tiny
@@ -135,9 +150,9 @@ A platform is an additive kernel-config fragment in `build/kernel/profiles/`
 `cryptos.config` during `kernel:build`. The base is unchanged, so builds with no
 `PLATFORM` behave as before.
 
-    task iso PLATFORM=vmware        # -> build/out/cryptos-amd64-vmware.iso
+    task iso PLATFORM=vmware        # -> build/out/cryptos-amd64-vmware-<build>.iso
 
-    task iso:unsigned PLATFORM=vmware   # -> build/out/cryptos-amd64-vmware-unsigned.iso
+    task iso:unsigned PLATFORM=vmware   # -> build/out/cryptos-amd64-vmware-unsigned-<build>.iso
 
 Boot it in a UEFI VM (Secure Boot off for an unsigned image, or unless your
 certificate is enrolled in `db`). Adding a
@@ -150,10 +165,10 @@ every driver is built in). A hosted image-factory service is a future step.
 is orthogonal to `PLATFORM`, defaults to `tpm`, and threads through `task iso`,
 `task image`, and `task image:debug`.
 
-    task iso PLATFORM=vmware STATEKEY=nodeid   # -> build/out/cryptos-amd64-vmware-nodeid.iso
+    task iso PLATFORM=vmware STATEKEY=nodeid   # -> build/out/cryptos-amd64-vmware-nodeid-<build>.iso
 
 The unsigned path takes the same variable: `task iso:unsigned PLATFORM=vmware
-STATEKEY=nodeid` writes `build/out/cryptos-amd64-vmware-nodeid-unsigned.iso`.
+STATEKEY=nodeid` writes `build/out/cryptos-amd64-vmware-nodeid-unsigned-<build>.iso`.
 
 The default image (no `STATEKEY`, or `STATEKEY=tpm`) is unchanged and
 TPM-backed: the state key is sealed to the TPM and the Root CA key is created in

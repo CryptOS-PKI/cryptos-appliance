@@ -95,7 +95,7 @@ tasks:
       - task: uki:assemble
 
   iso:unsigned:
-    desc: "[Linux] Unsigned UEFI ISO, no upgrade anchor (PLATFORM=vmware STATEKEY=tpm|nodeid; -> cryptos-<arch>-<platform>[-nodeid]-unsigned.iso)"
+    desc: "[Linux] Unsigned UEFI ISO, no upgrade anchor (PLATFORM=vmware STATEKEY=tpm|nodeid; -> cryptos-<arch>-<platform>[-nodeid]-unsigned-<build>.iso)"
     cmds:
       - task: image:unsigned
         vars: {PLATFORM: '{{.PLATFORM | default "vmware"}}', STATEKEY: '{{.STATEKEY | default "tpm"}}'}
@@ -119,6 +119,12 @@ tasks:
     desc: "[Linux] Boot the debug image in QEMU + swtpm (interactive)"
     cmds:
       - bash build/ci/qemu-run.sh {{.ARCH | default "amd64"}}
+
+  build:test:
+    desc: "Unit test the artifact-name/build-manifest naming helpers (git only, no build toolchain)"
+    cmds:
+      - bash build/ci/artifact-name_test.sh
+      - bash build/ci/build-manifest_test.sh
 
   e2e:image:
     desc: "[Linux] Full-image suite: boot the image in QEMU as a Root and an Intermediate and drive every step with cryptosctl (needs KVM, qemu, swtpm, OVMF, docker; skips without them)"
@@ -158,6 +164,7 @@ tasks:
       - task: vet
       - task: test
       - task: build
+      - task: build:test
   test-cover:
     desc: Run tests with coverage reporting
     cmds:
