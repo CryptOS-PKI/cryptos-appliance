@@ -2,8 +2,10 @@
 # Wrap a UKI into a UEFI-only bootable ISO. The ISO carries a FAT EFI
 # System Partition image whose EFI/BOOT/BOOTX64.EFI is the UKI; xorriso records
 # it as an El Torito EFI boot image (no legacy BIOS entry). Output:
-# build/out/cryptos-<arch>-<platform>[-nodeid][-unsigned].iso. Requires xorriso,
-# mtools, dosfstools.
+# build/out/cryptos-<arch>-<platform>[-nodeid][-unsigned]-<build>.iso, where
+# <build> is the git-describe build tag from build/ci/artifact-name.sh (every
+# released artifact carries it, so an ISO always names the exact commit it was
+# built from). Requires xorriso, mtools, dosfstools.
 #
 # Input UKI:
 #   default     the signed build/out/cryptos-<arch>.uki (task image)
@@ -22,6 +24,7 @@ platform="${PLATFORM:-vmware}"
 statekey="${STATEKEY:-tpm}"
 suffix=""
 [ "$statekey" = "nodeid" ] && suffix="-nodeid"
+build_tag="$("$root/build/ci/artifact-name.sh")"
 out="$root/build/out"
 case "${UNSIGNED:-}" in
   1|true|yes) unsigned=1 ;;
@@ -62,7 +65,7 @@ isodir="$work/iso"
 mkdir -p "$isodir"
 cp "$esp" "$isodir/efiboot.img"
 cp "$uki" "$isodir/cryptos.uki"
-iso="$out/cryptos-$arch-$platform$suffix.iso"
+iso="$out/cryptos-$arch-$platform$suffix-$build_tag.iso"
 xorriso -as mkisofs \
   -V "CRYPTOS_${platform}" \
   -e efiboot.img -no-emul-boot \
