@@ -2,10 +2,12 @@
 
 > 🧭 The signed OS image, installer and A/B image upgrades for CryptOS nodes.
 
-CryptOS ships source only: no prebuilt image, signed or unsigned. Build the
-bootable image yourself and sign it with your own Secure Boot key -- see
-[`build/README.md`](build/README.md) for the pipeline and
-[`docs/secure-boot.md`](docs/secure-boot.md) for generating the key.
+Every image you run is signed by you. Each release attaches an unsigned image
+-- the project never signs one -- so sign the downloaded image with your own
+Secure Boot key, or build the bootable image yourself and sign it, your key
+either way. See [`build/README.md`](build/README.md) for the build pipeline
+and [`docs/secure-boot.md`](docs/secure-boot.md) for generating the key and
+for the release asset list.
 
 ## 📦 Install
 

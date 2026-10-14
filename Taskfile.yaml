@@ -77,11 +77,10 @@ tasks:
         vars: {PLATFORM: '{{.PLATFORM | default "vmware"}}', STATEKEY: '{{.STATEKEY | default "tpm"}}'}
       - PLATFORM='{{.PLATFORM | default "vmware"}}' STATEKEY='{{.STATEKEY | default "tpm"}}' bash build/iso/build.sh {{.ARCH | default "amd64"}}
 
-  # Unsigned path: for evaluation with Secure Boot off. Nothing is signed
+  # Unsigned path: the shape of the published release assets. Nothing is signed
   # and no upgrade anchor is stamped, even if SB_KEY/SB_CERT are exported, so
-  # the output trusts no key and is never published. Sign it with your own key
-  # (task uki:sign, or a full `task image` with SB_KEY/SB_CERT set); see
-  # docs/secure-boot.md.
+  # the output trusts no key. Sign it with your own key (task uki:sign, or a
+  # full `task image` with SB_KEY/SB_CERT set); see docs/secure-boot.md.
   image:unsigned:
     desc: "[Linux] Full prod image build, unsigned, no upgrade anchor (-> build/out/cryptos-<arch>.uki.unsigned; STATEKEY=tpm|nodeid)"
     cmds:

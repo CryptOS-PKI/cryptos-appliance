@@ -110,17 +110,16 @@ go build -ldflags "-s -w $(build/ci/buildinfo.sh)" ./cmd/cryptosctl
 
 ## Artifact file names
 
-Every build artifact (the ISO, the `dist/` UKI copy, the `cryptosctl` binaries) carries the
+Every published artifact (the ISO, the `dist/` UKI copy, the `cryptosctl` binaries) carries the
 build number in its file name: a git-describe style tag from `build/ci/artifact-name.sh`
 (`<version>-g<shortsha>`, `-dirty` for a modified tree), so two builds never collide on name and
-`SHA256SUMS` always ties a file back to the exact commit. These stay local build output; CryptOS
-publishes no prebuilt artifacts of its own.
+`SHA256SUMS` always ties a file back to the exact commit:
 
 ```bash
 build/ci/artifact-name.sh        # e.g. v0.1.0-5-ga1b2c3d, or ga1b2c3d with no tags yet
 ```
 
-`build/ci/build-manifest.sh <artifact>...` writes the build record alongside those artifacts
+`build/ci/build-manifest.sh <artifact>...` writes the build record alongside the release assets
 (`dist/build-manifest.json`): the full commit, the short commit, dirty state, the version, the
 build tag, and the artifact file names.
 

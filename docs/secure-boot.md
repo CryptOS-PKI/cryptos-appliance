@@ -1,19 +1,20 @@
 # Secure Boot: build and sign with your own key
 
-CryptOS does not ship a signing key, and it does not ask you to trust one. You
-generate your own Secure Boot key, build the image with it, and enroll its
-certificate on the machines you run. The same certificate becomes the node's
-upgrade anchor, so the key that makes an image bootable is also the only key
-that can replace it later.
+Every image you run is signed by you. CryptOS does not ship a signing key,
+and it does not ask you to trust one. You generate your own Secure Boot key,
+build the image with it (or sign a downloaded unsigned image with it), and
+enroll its certificate on the machines you run. The same certificate becomes
+the node's upgrade anchor, so the key that makes an image bootable is also
+the only key that can replace it later.
 
 > [!IMPORTANT]
-> **CryptOS ships source only.** The project publishes no prebuilt image,
-> signed or unsigned -- no release carries a key the project generated. Build
-> the image yourself with your own key by following this guide. An unsigned
-> build (see
-> [Unsigned builds for evaluation](#unsigned-builds-for-evaluation)) is for
-> trying CryptOS with Secure Boot off; it has no upgrade anchor, so a node
-> installed from it can never be upgraded in place.
+> **The project never signs an image.** No release carries a key the project
+> generated. The release attaches an unsigned image (see
+> [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets)):
+> it boots only with Secure Boot off and has no upgrade anchor, so a node
+> installed from it can never be upgraded in place. To run CryptOS for real,
+> sign the downloaded image with your own key, or build it yourself with your
+> own key, by following this guide.
 
 ## What the key is used for
 
@@ -392,7 +393,7 @@ The signature is read from `<image>.sig` unless `--signature` names another
 file. An image signed by any other key is refused before anything is written
 to the ESP.
 
-## Unsigned builds for evaluation
+## Unsigned builds and the release assets
 
 `task image:unsigned` runs the same chain as `task image` but stops at
 `uki:assemble`, and `task iso:unsigned` wraps that UKI in an ISO. They never
@@ -408,12 +409,21 @@ task iso:unsigned PLATFORM=vmware STATEKEY=nodeid
 | `cryptos-amd64.uki.unsigned` | the UKI, no Authenticode signature, no anchor |
 | `cryptos-amd64-vmware-nodeid-unsigned-<build>.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
-CryptOS releases ship source only: tags, release notes and the source archive,
-with no UKI, ISO, `cryptosctl` binary or other artifact attached. "Tested"
-means CI and a lab gate build this way -- `task iso:unsigned` for
-`STATEKEY=tpm` and `STATEKEY=nodeid` -- from the exact tagged source with a
-throwaway per-run key, and prove install, boot, upgrade and rollback. Nothing
-from that build is published; build your own with the steps above.
+This is how the public release assets are built. On a `v*` tag, CI runs
+`task iso:unsigned` for `STATEKEY=tpm` and `STATEKEY=nodeid` with no Secure
+Boot variables set, and attaches the UKIs (renamed
+`cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned`), the ISOs, `cryptosctl`
+for linux and darwin on amd64 and arm64 (each also named with `<build>`), a
+`build-manifest.json` build record (the full and short commit, dirty state,
+version and build tag), and a `SHA256SUMS` -- never a project-signed image or
+any attestation. The per-run key the CI smoke build uses on `main` signs and
+anchors only images that are thrown away with the run; none of them is
+uploaded.
+
+Verify what you downloaded before using it: check it against `SHA256SUMS`
+(`sha256sum -c SHA256SUMS`), or, since the build is meant to be bit-for-bit
+reproducible, rebuild from the same tag with the steps above and compare the
+hash yourself.
 
 Check that a build carries no anchor with the grep from step 5 against your own
 certificate, or, without one, by looking for any base64 X.509 certificate in
