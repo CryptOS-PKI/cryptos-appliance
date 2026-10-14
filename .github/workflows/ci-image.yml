@@ -1,6 +1,6 @@
 name: Image build (kernel, rootfs, UKI, release assets)
 
-# Build the UKI on a GitHub-hosted runner. amd64 builds on ubuntu-latest;
+# Build the UKI on a GitHub-hosted runner. amd64 builds on ubuntu-24.04;
 # arm64 builds on the hosted ubuntu-24.04-arm runner (selectable via manual
 # dispatch). The build toolchain (kernel deps, ukify, sbsign, mksquashfs) is
 # installed per run — no pre-provisioned or self-hosted runner.
@@ -58,21 +58,21 @@ jobs:
   build-image:
     name: Build and sign the UKI (ephemeral CI key, not published)
     if: ${{ !startsWith(github.ref, 'refs/tags/v') && !inputs.release_assets }}
-    # amd64 -> ubuntu-latest (x86_64); arm64 -> the hosted arm64 runner.
-    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    # amd64 -> ubuntu-24.04 (x86_64); arm64 -> the hosted arm64 runner.
+    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     env:
       ARCH: ${{ github.event.inputs.arch || 'amd64' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history and tags so build/ci/buildinfo.sh can `git describe`
           # the build; a shallow clone only yields the bare commit hash.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -98,7 +98,7 @@ jobs:
       # Cache the kernel source tree + build artifacts across runs so only
       # the first build pays the full compile cost.
       - name: Cache kernel build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: build/.work/kernel
           key: kernel-${{ env.ARCH }}-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
@@ -139,7 +139,7 @@ jobs:
   release-assets:
     name: Build the unsigned release assets
     if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release_assets }}
-    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     env:
       ARCH: ${{ github.event.inputs.arch || 'amd64' }}
@@ -147,13 +147,13 @@ jobs:
       PLATFORM: vmware
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history and tags so buildinfo.sh stamps the tag as the version.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -173,7 +173,7 @@ jobs:
         run: go install github.com/go-task/task/v3/cmd/task@latest
 
       - name: Cache kernel build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: build/.work/kernel
           key: kernel-${{ env.ARCH }}-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
