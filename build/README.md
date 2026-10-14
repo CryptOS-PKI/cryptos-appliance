@@ -1,10 +1,10 @@
 # Image build pipeline
 
-> **Status: DRAFT.** These recipes are written but **not yet executed** —
-> they need a Linux build host (kernel toolchain, `mksquashfs`, `ukify`,
-> `sbsign`, `cpio`). Treat the shell scripts as reviewed skeletons, not
-> validated builds. The version pins (`ci/versions.env`) and the kernel
-> config (`kernel/cryptos.config`) are the reviewable, load-bearing parts.
+> **Status: validated on amd64.** This pipeline builds and signs the UKI on
+> every push to `main` (`.github/workflows/ci-image.yml`) and boots the
+> result in QEMU with `swtpm` and OVMF (`.github/workflows/ci-e2e-image.yml`).
+> arm64 is parameterized but not yet exercised; see "Open decisions to
+> finalize during Linux validation" below.
 
 ## Pipeline
 
@@ -110,16 +110,17 @@ go build -ldflags "-s -w $(build/ci/buildinfo.sh)" ./cmd/cryptosctl
 
 ## Artifact file names
 
-Every published artifact (the ISO, the `dist/` UKI copy, the `cryptosctl` binaries) carries the
+Every build artifact (the ISO, the `dist/` UKI copy, the `cryptosctl` binaries) carries the
 build number in its file name: a git-describe style tag from `build/ci/artifact-name.sh`
 (`<version>-g<shortsha>`, `-dirty` for a modified tree), so two builds never collide on name and
-`SHA256SUMS` always ties a file back to the exact commit:
+`SHA256SUMS` always ties a file back to the exact commit. These stay local build output; CryptOS
+publishes no prebuilt artifacts of its own.
 
 ```bash
 build/ci/artifact-name.sh        # e.g. v0.1.0-5-ga1b2c3d, or ga1b2c3d with no tags yet
 ```
 
-`build/ci/build-manifest.sh <artifact>...` writes the build record alongside the release assets
+`build/ci/build-manifest.sh <artifact>...` writes the build record alongside those artifacts
 (`dist/build-manifest.json`): the full commit, the short commit, dirty state, the version, the
 build tag, and the artifact file names.
 

@@ -7,12 +7,13 @@ upgrade anchor, so the key that makes an image bootable is also the only key
 that can replace it later.
 
 > [!IMPORTANT]
-> **Public release assets are unsigned, or a build recipe only.** Nothing the
-> project publishes is signed by, carries, or trusts a key the project
-> generated. A prebuilt image is for evaluation with Secure Boot off; it has no
-> upgrade anchor, so a node installed from it cannot be upgraded in place. To
-> run CryptOS for real, build it with your own key by following this guide.
-> See [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets).
+> **CryptOS ships source only.** The project publishes no prebuilt image,
+> signed or unsigned -- no release carries a key the project generated. Build
+> the image yourself with your own key by following this guide. An unsigned
+> build (see
+> [Unsigned builds for evaluation](#unsigned-builds-for-evaluation)) is for
+> trying CryptOS with Secure Boot off; it has no upgrade anchor, so a node
+> installed from it can never be upgraded in place.
 
 ## What the key is used for
 
@@ -391,7 +392,7 @@ The signature is read from `<image>.sig` unless `--signature` names another
 file. An image signed by any other key is refused before anything is written
 to the ESP.
 
-## Unsigned builds and the release assets
+## Unsigned builds for evaluation
 
 `task image:unsigned` runs the same chain as `task image` but stops at
 `uki:assemble`, and `task iso:unsigned` wraps that UKI in an ISO. They never
@@ -407,15 +408,12 @@ task iso:unsigned PLATFORM=vmware STATEKEY=nodeid
 | `cryptos-amd64.uki.unsigned` | the UKI, no Authenticode signature, no anchor |
 | `cryptos-amd64-vmware-nodeid-unsigned-<build>.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
-This is how the public release assets are built. On a `v*` tag, CI runs
-`task iso:unsigned` for `STATEKEY=tpm` and `STATEKEY=nodeid` with no Secure
-Boot variables set, and attaches the UKIs (renamed
-`cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned`), the ISOs, `cryptosctl`
-for linux and darwin on amd64 and arm64 (each also named with `<build>`), a
-`build-manifest.json` build record (the full and short commit, dirty state,
-version and build tag), and a `SHA256SUMS`. The per-run key the CI smoke build
-uses on `main` signs and anchors only images that are thrown away with the
-run; none of them is uploaded.
+CryptOS releases ship source only: tags, release notes and the source archive,
+with no UKI, ISO, `cryptosctl` binary or other artifact attached. "Tested"
+means CI and a lab gate build this way -- `task iso:unsigned` for
+`STATEKEY=tpm` and `STATEKEY=nodeid` -- from the exact tagged source with a
+throwaway per-run key, and prove install, boot, upgrade and rollback. Nothing
+from that build is published; build your own with the steps above.
 
 Check that a build carries no anchor with the grep from step 5 against your own
 certificate, or, without one, by looking for any base64 X.509 certificate in
