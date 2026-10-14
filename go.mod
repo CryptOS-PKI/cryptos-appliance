@@ -3,7 +3,7 @@ module github.com/CryptOS-PKI/cryptos-appliance
 go 1.26.8
 
 require (
-	github.com/CryptOS-PKI/cryptos-node v0.0.0-20261006202821-14f41832f058
+	github.com/CryptOS-PKI/cryptos-node v0.0.0-20261014023944-6bd5eaeda724
 	golang.org/x/crypto v0.55.0
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.83.2
