@@ -48,13 +48,23 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# Reproducible: one commit gives the same ISO bytes on every build. The FAT
+# volume serial, the file and directory times, the ISO volume dates and the
+# GPT GUIDs xorriso writes for -isohybrid-gpt-basdat all derive from the
+# commit time instead of the clock or a random source, and the Rock Ridge
+# modes and owner are fixed instead of taken from the build user and umask.
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || echo 0)}"
+export SOURCE_DATE_EPOCH
+
 # 1. FAT ESP image sized to the UKI + slack, with EFI/BOOT/BOOTX64.EFI = UKI.
 esp="$work/esp.img"
 uki_kib=$(( ( $(stat -c%s "$uki") / 1024 ) + 2048 ))   # UKI size + 2 MiB slack
 truncate -s "${uki_kib}K" "$esp"
-mkfs.vfat -n CRYPTOS "$esp" >/dev/null
+mkfs.vfat --invariant -i "$(printf '%08x' "$(( SOURCE_DATE_EPOCH & 0xffffffff ))")" -n CRYPTOS "$esp" >/dev/null
+cp "$uki" "$work/BOOTX64.EFI"
+touch -d "@$SOURCE_DATE_EPOCH" "$work/BOOTX64.EFI"
 mmd -i "$esp" ::EFI ::EFI/BOOT
-mcopy -i "$esp" "$uki" ::EFI/BOOT/BOOTX64.EFI
+mcopy -m -i "$esp" "$work/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
 
 # 2. ISO with the ESP as an El Torito EFI boot image (UEFI only).
 #    A plain copy of the UKI is also placed at the ISO root so that
@@ -65,9 +75,13 @@ isodir="$work/iso"
 mkdir -p "$isodir"
 cp "$esp" "$isodir/efiboot.img"
 cp "$uki" "$isodir/cryptos.uki"
+chmod 0755 "$isodir"
+chmod 0644 "$isodir"/*
+find "$isodir" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 iso="$out/cryptos-$arch-$platform$suffix-$build_tag.iso"
 xorriso -as mkisofs \
   -V "CRYPTOS_${platform}" \
+  -uid 0 -gid 0 \
   -e efiboot.img -no-emul-boot \
   -isohybrid-gpt-basdat \
   -o "$iso" "$isodir" >/dev/null 2>&1
