@@ -1196,10 +1196,21 @@ func stepRevocation(t *testing.T, s *suite, st *suiteState) {
 		return (stapledRevoked || revokedLogged) && !stillGood, stapleState(o) + fmt.Sprintf("; nginx logged revoked: %t", revokedLogged)
 	})
 	resolve := nginxName + ":" + nginxPort + ":127.0.0.1"
-	if out, err := run(t, "", "curl", "-sS", "--fail", "--cert-status", "--cacert", filepath.Join(dir, "root.pem"),
-		"--resolve", resolve, "https://"+nginxName+":"+nginxPort+"/"); err == nil {
-		t.Fatalf("curl --cert-status accepted a revoked staple:\n%s", out)
-	}
+	// nginx -s reload returns as soon as the signal is sent: the outgoing
+	// worker keeps serving connections (and its last-good cached staple)
+	// until it drains and exits, racing the new worker that already fetched
+	// the revoked status. The openssl probe above only needs one connection
+	// to see the new worker, so it can succeed on its first try while a
+	// separate curl connection right after still lands on the outgoing one.
+	// Retry bounded on that handoff instead of asserting a single connection.
+	eventually(t, "curl --cert-status refuses the revoked staple", 30*time.Second, func() (bool, string) {
+		out, err := run(t, "", "curl", "-sS", "--fail", "--cert-status", "--cacert", filepath.Join(dir, "root.pem"),
+			"--resolve", resolve, "https://"+nginxName+":"+nginxPort+"/")
+		if err == nil {
+			return false, "curl accepted the staple: " + out
+		}
+		return true, fmt.Sprintf("curl refused: %v", err)
+	})
 	note(t, "OCSP (POST and GET) and openssl ocsp say revoked, the CRL lists it, nginx drops the good staple, curl --cert-status refuses")
 }
 
