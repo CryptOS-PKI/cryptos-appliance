@@ -10,11 +10,12 @@ name: Image build (kernel, rootfs, UKI, release assets)
 #     ephemeral key signs the UKI and is stamped in as the upgrade anchor, to
 #     exercise rootfs:build and uki:sign. That key is discarded with the run,
 #     so NOTHING this path builds is uploaded, not even as an Actions artifact.
-#   - v* tags (or dispatch with release_assets): builds the unsigned release
-#     assets with `task iso:unsigned` and no Secure Boot variables at all, to
-#     prove they build. They carry no signature and no upgrade anchor;
-#     operators sign with their own key (docs/secure-boot.md). Releases are
-#     source only: nothing is uploaded or attached to a release.
+#   - v* tags (or dispatch with release_assets): the release assets, built
+#     with `task iso:unsigned` and no Secure Boot variables at all. They carry
+#     no signature and no upgrade anchor, and nothing signs or attests them;
+#     users sign with their own key (docs/secure-boot.md). On a tag they are
+#     attached to that tag's release with SHA256SUMS and build-manifest.json,
+#     after build/release/check-unsigned.sh proves none of them is signed.
 #
 # Not triggered by pull_request: the kernel compile is expensive, so it runs
 # on push to main, tags, and manual dispatch. Use workflow_dispatch on a
@@ -235,3 +236,81 @@ jobs:
                 -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}-${build_tag}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
             done
           done
+
+      - name: Write the build record
+        run: |
+          set -euo pipefail
+          build/ci/build-manifest.sh dist/* > dist/build-manifest.json
+          cat dist/build-manifest.json
+
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      # The project signs nothing. This fails the run if any UKI, on its own or
+      # inside an ISO, carries an Authenticode signature, if a signature,
+      # certificate or attestation file is present, or if SHA256SUMS does not
+      # cover every file. The test proves the check catches a signed image.
+      - name: Check nothing is signed
+        run: |
+          set -euo pipefail
+          bash build/release/check-unsigned_test.sh
+          bash build/release/check-unsigned.sh dist
+
+      - name: Upload the release assets for the attach job
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: cryptos-${{ env.ARCH }}-release-assets
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # On a v* tag, attach the unsigned assets to the tag's release. Publishing
+  # the Release Drafter draft is what creates the tag, so the release exists;
+  # this job only uploads files to it and never creates, publishes or edits a
+  # release. It runs the check again on exactly the files it attaches.
+  attach-assets:
+    name: Attach the unsigned assets to the release
+    needs: release-assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # upload assets to the existing release
+    env:
+      ARCH: ${{ github.event.inputs.arch || 'amd64' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Download the release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: cryptos-${{ env.ARCH }}-release-assets
+          path: dist
+
+      - name: Install the check's tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sbsigntool xorriso mtools
+
+      - name: Check nothing is signed
+        run: bash build/release/check-unsigned.sh dist
+
+      - name: Attach the assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "no release for $TAG: publish the draft (which creates the tag) before assets can be attached" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" dist/* --clobber
