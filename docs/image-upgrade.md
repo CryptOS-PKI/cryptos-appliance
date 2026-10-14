@@ -38,9 +38,9 @@ anchor certificate compiled into the image it is running, which is the
 refused, including a CI build signed with that workflow's per-run ephemeral
 key.
 
-The public release assets carry no anchor. A node installed from one serves
-the upgrade RPCs as `Unimplemented`, and moving it onto your own key is a
-reinstall.
+An image built from the unsigned release recipe (`docs/secure-boot.md`) carries
+no anchor. A node installed from one serves the upgrade RPCs as
+`Unimplemented`, and moving it onto your own key is a reinstall.
 
 ## The procedure
 
