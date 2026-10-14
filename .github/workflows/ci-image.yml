@@ -1,6 +1,6 @@
 name: Image build (kernel, rootfs, UKI, release assets)
 
-# Build the UKI on a GitHub-hosted runner. amd64 builds on ubuntu-latest;
+# Build the UKI on a GitHub-hosted runner. amd64 builds on ubuntu-24.04;
 # arm64 builds on the hosted ubuntu-24.04-arm runner (selectable via manual
 # dispatch). The build toolchain (kernel deps, ukify, sbsign, mksquashfs) is
 # installed per run — no pre-provisioned or self-hosted runner.
@@ -10,11 +10,11 @@ name: Image build (kernel, rootfs, UKI, release assets)
 #     ephemeral key signs the UKI and is stamped in as the upgrade anchor, to
 #     exercise rootfs:build and uki:sign. That key is discarded with the run,
 #     so NOTHING this path builds is uploaded, not even as an Actions artifact.
-#   - v* tags (or dispatch with release_assets): the release assets, built
-#     with `task iso:unsigned` and no Secure Boot variables at all. They carry
-#     no signature and no upgrade anchor; operators sign with their own key
-#     (docs/secure-boot.md). Only these are uploaded and, on a tag, attached to
-#     the GitHub Release.
+#   - v* tags (or dispatch with release_assets): builds the unsigned release
+#     assets with `task iso:unsigned` and no Secure Boot variables at all, to
+#     prove they build. They carry no signature and no upgrade anchor;
+#     operators sign with their own key (docs/secure-boot.md). Releases are
+#     source only: nothing is uploaded or attached to a release.
 #
 # Not triggered by pull_request: the kernel compile is expensive, so it runs
 # on push to main, tags, and manual dispatch. Use workflow_dispatch on a
@@ -58,21 +58,21 @@ jobs:
   build-image:
     name: Build and sign the UKI (ephemeral CI key, not published)
     if: ${{ !startsWith(github.ref, 'refs/tags/v') && !inputs.release_assets }}
-    # amd64 -> ubuntu-latest (x86_64); arm64 -> the hosted arm64 runner.
-    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    # amd64 -> ubuntu-24.04 (x86_64); arm64 -> the hosted arm64 runner.
+    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     env:
       ARCH: ${{ github.event.inputs.arch || 'amd64' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history and tags so build/ci/buildinfo.sh can `git describe`
           # the build; a shallow clone only yields the bare commit hash.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -98,7 +98,7 @@ jobs:
       # Cache the kernel source tree + build artifacts across runs so only
       # the first build pays the full compile cost.
       - name: Cache kernel build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: build/.work/kernel
           key: kernel-${{ env.ARCH }}-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
@@ -139,7 +139,7 @@ jobs:
   release-assets:
     name: Build the unsigned release assets
     if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release_assets }}
-    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     env:
       ARCH: ${{ github.event.inputs.arch || 'amd64' }}
@@ -147,13 +147,13 @@ jobs:
       PLATFORM: vmware
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history and tags so buildinfo.sh stamps the tag as the version.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -173,7 +173,7 @@ jobs:
         run: go install github.com/go-task/task/v3/cmd/task@latest
 
       - name: Cache kernel build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: build/.work/kernel
           key: kernel-${{ env.ARCH }}-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
@@ -222,7 +222,8 @@ jobs:
 
       # cryptosctl for operator workstations, stamped with the same build
       # identity as the image (build/ci/buildinfo.sh) and the same build-number
-      # tag as the image artifacts (build/ci/artifact-name.sh).
+      # tag as the image artifacts (build/ci/artifact-name.sh). Proves the
+      # cross-builds succeed; nothing here is uploaded or attached anywhere.
       - name: Cross-build cryptosctl
         run: |
           set -euo pipefail
@@ -234,75 +235,3 @@ jobs:
                 -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}-${build_tag}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
             done
           done
-
-      - name: Write the build record
-        run: |
-          set -euo pipefail
-          build/ci/build-manifest.sh dist/* > dist/build-manifest.json
-          cat dist/build-manifest.json
-
-      - name: Write SHA256SUMS
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum -- * > SHA256SUMS
-          cat SHA256SUMS
-
-      - name: Upload release assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: cryptos-${{ env.ARCH }}-release-assets
-          path: dist/
-          if-no-files-found: error
-
-  # On a v* tag, attach the unsigned release assets to that tag's GitHub
-  # Release. The maintainer creates releases by hand from the Release Drafter
-  # draft (see release-drafter.yml), so this job prefers to attach to an
-  # existing release or draft for the tag. If none exists it creates a DRAFT,
-  # never a published release, and marks it a pre-release for -alpha/-beta/-rc
-  # tags; the maintainer reviews and publishes it.
-  publish-release:
-    name: Attach the unsigned assets to the release
-    needs: release-assets
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write # create/update the release and upload the assets
-    env:
-      ARCH: ${{ github.event.inputs.arch || 'amd64' }}
-    steps:
-      - name: Download the release assets
-        uses: actions/download-artifact@v4
-        with:
-          name: cryptos-${{ env.ARCH }}-release-assets
-          path: dist
-
-      - name: Attach the assets to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          ( cd dist && sha256sum -c SHA256SUMS )
-          assets=(dist/*)
-
-          prerelease=false
-          case "$TAG" in
-            *-alpha*|*-beta*|*-rc*) prerelease=true ;;
-          esac
-
-          # gh release view also finds a draft whose tag name matches.
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${assets[@]}" --clobber
-            if [ "$prerelease" = true ]; then
-              gh release edit "$TAG" --prerelease
-            fi
-          else
-            flags=(--draft --verify-tag --generate-notes --title "$TAG")
-            if [ "$prerelease" = true ]; then
-              flags+=(--prerelease)
-            fi
-            gh release create "$TAG" "${assets[@]}" "${flags[@]}"
-          fi
