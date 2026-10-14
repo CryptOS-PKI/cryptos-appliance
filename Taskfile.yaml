@@ -121,17 +121,24 @@ tasks:
       - bash build/ci/qemu-run.sh {{.ARCH | default "amd64"}}
 
   build:test:
-    desc: "Unit test the artifact-name/build-manifest naming helpers (git only, no build toolchain)"
+    desc: "Unit test the build and release helper scripts (git only; the ISO test skips without xorriso/mtools)"
     cmds:
       - bash build/ci/artifact-name_test.sh
       - bash build/ci/build-manifest_test.sh
       - bash build/release/guard_test.sh
+      - bash build/release/reproducible_test.sh
+      - bash build/iso/build_test.sh
       - bash test/gate/baseline_test.sh
 
   release:guard:
     desc: "Check release/pins.yaml: every pin present, a full commit, reachable, and cryptos-node matches go.mod"
     cmds:
       - bash build/release/guard.sh
+
+  release:reproducible:
+    desc: "[Linux] Build the unsigned UKI and ISO twice from HEAD in clean workspaces and compare SHA-256 (REPRO_STATEKEY=tpm|nodeid; needs the image toolchain)"
+    cmds:
+      - bash build/release/reproducible.sh
 
   gate:baseline:
     desc: "[Linux] Build the gate's upgrade_from baseline image from its pinned commit, cached by pin (needs go, task, the image toolchain)"

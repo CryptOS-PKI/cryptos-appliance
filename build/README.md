@@ -123,6 +123,38 @@ build/ci/artifact-name.sh        # e.g. v0.1.0-5-ga1b2c3d, or ga1b2c3d with no t
 (`dist/build-manifest.json`): the full commit, the short commit, dirty state, the version, the
 build tag, and the artifact file names.
 
+## Reproducible builds
+
+One commit builds to the same unsigned UKI and ISO bytes every time, so anyone can rebuild a
+release tag and compare the result with the published `SHA256SUMS`. `task release:reproducible`
+checks it: it clones the commit into two fresh workspaces, each with its own Go build cache, runs
+`task iso:unsigned` in both and compares every file in `build/out` by SHA-256. It exits non-zero
+and names each file that differs.
+
+```bash
+task release:reproducible                                  # nodeid, vmware, amd64
+REPRO_STATEKEY=tpm task release:reproducible               # the tpm variant
+REPRO_KEEP=1 REPRO_WORK=/tmp/repro task release:reproducible   # keep both trees for diffoscope
+```
+
+What makes it hold:
+
+- Every time stamp comes from the commit time (`SOURCE_DATE_EPOCH`): the kernel build, the
+  SquashFS, the initrd's cpio entries, the files and volume serial of the ESP's FAT image, and the
+  ISO's dates and GPT GUIDs.
+- File modes and owners are fixed (directories and executables `0755`, other files `0644`, owner
+  root) in the SquashFS, the initrd and the ISO's Rock Ridge entries, so the build user and umask
+  do not show. The initrd's inode numbers come from the archive order (`cpio --reproducible`).
+- The Go binaries are built with `-trimpath`, and the build identity is the commit, its tag and
+  its time.
+
+What it does not cover: the toolchain itself. The kernel is built with the host compiler, the
+static tools inside the pinned Docker builder images (`ALPINE_BUILDER`, `DEBIAN_BUILDER`, whose
+packages follow the distribution's updates), and the UKI with the host's `ukify` and systemd stub.
+Two builds match when they use the same toolchain, as the two workspaces of the check do. To match
+a release's `SHA256SUMS`, build on the runner image the release used (`ubuntu-24.04`) with the
+same Go version as `go.mod`.
+
 ## Rootfs delivery
 
 `uki/assemble.sh` defaults to `ROOTFS_MODE=squashfs` (the spec target): a tiny
