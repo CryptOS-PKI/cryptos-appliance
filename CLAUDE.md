@@ -146,7 +146,7 @@ fast during a wave of PRs. The shipped workflows are shaped around that:
 - Verify with evidence, not assertions: run the real check for what changed (lint, a full
   template/build render, `actionlint` for workflows) before calling it done. Green CI is necessary,
   not sufficient.
-- One concern per branch/PR, even tiny ones — it keeps reviews and the drafted changelog clean.
+- One concern per branch/PR, even tiny ones — it keeps reviews and the draft release notes clean.
 - When PRs interact, state an explicit merge ORDER rather than opening them and walking away:
   anything a *tag* triggers needs its inputs on `main` first; a new *gate* (check) needs the
   violations it catches fixed first; a workflow that builds from committed content needs that
@@ -183,22 +183,19 @@ issue with ordered **sub-issues** -> put it on the active **milestone** -> branc
 (the autolabeler sets the category label from the title), the template body, and a **closing
 summary** before merge -> **squash** merge. The operator (@CryptOS-PKI) is the assignee.
 
-On merge, release-drafter drafts the next notes by label and `CHANGELOG.md` updates on `main` via the
-changelog action -- **nothing tags automatically**. When the first push to main resolves the version,
-rename the milestone to that version. The maintainer then **manually publishes the GitHub Release**,
-which creates the tag with the finalized changelog (and triggers the publish where the repo ships a
-package).
+On merge, release-drafter drafts the next notes by label -- **nothing tags automatically**. When
+the first push to main resolves the version, rename the milestone to that version. The maintainer
+then **manually publishes the GitHub Release**, which creates the tag with the drafted notes (and
+triggers the publish where the repo ships a package).
 
 Keep public artifacts (issues, PRs, commit messages) free of references to local-only design notes.
 
 ## Releasing
 
-On every push to `main` the **Release Manager** workflow (`.github/workflows/job-version-bump.yaml`)
-runs: release-drafter anticipates the next version, the manifest version is bumped (package
-ecosystems only), `CHANGELOG.md` is updated via the changelog action, and a
-`chore(pre-release): vX [skip ci]` commit is pushed back to `main`. **Nothing tags automatically.**
+On every push to `main` the **Release Drafter** workflow (`.github/workflows/release-drafter.yml`)
+drafts the next release notes using the built-in `GITHUB_TOKEN`. **Nothing tags automatically.**
 The maintainer then publishes the GitHub Release by hand, which creates the `vX.Y.Z` tag with the
-finalized changelog and triggers the publish workflow where the repo ships a package.
+drafted notes and triggers the publish workflow where the repo ships a package.
 
 In npm-based ecosystems (repos with a `package.json`), the canonical version bump is
 `npm version "v<resolved>" --no-git-tag-version --allow-same-version` in `job-version-bump.yaml`.
