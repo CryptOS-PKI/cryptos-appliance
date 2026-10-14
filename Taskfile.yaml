@@ -125,6 +125,12 @@ tasks:
     cmds:
       - bash build/ci/artifact-name_test.sh
       - bash build/ci/build-manifest_test.sh
+      - bash test/gate/baseline_test.sh
+
+  gate:baseline:
+    desc: "[Linux] Build the gate's upgrade_from baseline image from its pinned commit, cached by pin (needs go, task, the image toolchain)"
+    cmds:
+      - bash test/gate/baseline.sh {{.CLI_ARGS}}
 
   e2e:image:
     desc: "[Linux] Full-image suite: boot the image in QEMU as a Root and an Intermediate and drive every step with cryptosctl (needs KVM, qemu, swtpm, OVMF, docker; skips without them)"
