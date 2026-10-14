@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Stand-in cryptosctl for run_test.sh: a node per role under $FAKE_STATE,
+# with real certificates made by openssl, so the gate's serial, key, chain
+# and image checks run against real PEM. It models the image slots the way
+# the node does (stage puts the image on the boot path, activate reboots,
+# rollback swaps back) and refuses any image that is not the candidate with
+# the candidate's signature, unless FAKE_ACCEPT_ALL=1.
+set -euo pipefail
+s="${FAKE_STATE:?}"
+endpoint="" trust="" insecure=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --endpoint) endpoint="$2"; shift 2 ;;
+    --trust) trust="$2"; shift 2 ;;
+    --identity | --identity-key | --server-name | -o | --output) shift 2 ;;
+    --insecure) insecure=1; shift ;;
+    *) break ;;
+  esac
+done
+addr="${endpoint%:*}"
+role="$(awk -v a="$addr" '$1 == a {print $2}' "$s/addrmap")"
+[ -n "$role" ] || { echo "fake cryptosctl: unknown endpoint" >&2; exit 1; }
+d="$s/node-$role"
+{
+  printf 'NODE %s ARGS' "$role"
+  printf ' <%s>' "$@"
+  printf '\n'
+} >> "$s/cryptosctl.log"
+[ -f "$d/off" ] && { echo "fake cryptosctl: connection refused" >&2; exit 1; }
+
+opt() {
+  local want="$1"
+  shift
+  while [ $# -gt 0 ]; do
+    [ "$1" = "$want" ] && { printf '%s\n' "$2"; return; }
+    shift
+  done
+}
+
+sign_ca() { # csr cakey cacert out
+  openssl x509 -req -in "$1" -CA "$3" -CAkey "$2" -CAcreateserial -days 30 -out "$4" \
+    -extfile <(printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n') 2>/dev/null
+}
+
+cmd="$1 ${2:-}"
+case "$cmd" in
+  "config apply")
+    [ "$insecure" = 1 ] || { echo "fake: config apply needs --insecure on a maintenance node" >&2; exit 1; }
+    sha="$(cat "$s/iso-$(cat "$d/iso")")"
+    printf '%s\n' "$sha" > "$d/running"
+    printf '%s\n' "$sha" > "$d/next"
+    : > "$d/previous"
+    echo 1 > "$d/boots"
+    : > "$d/installed"
+    echo "applied; installing"
+    ;;
+  "trust fetch")
+    cp "$s/selfsigned.pem" "$trust"
+    ;;
+  "status "*)
+    id=AWAITING_CEREMONY
+    [ -f "$d/ca.crt" ] && id=ESTABLISHED
+    printf 'Role:            %s\nIdentity:        %s\nBoot count:      %s\n' "$role" "$id" "$(cat "$d/boots")"
+    ;;
+  "image status")
+    pending=no
+    [ "$(cat "$d/next")" != "$(cat "$d/running")" ] && pending="yes -- run 'cryptosctl image activate' to boot it"
+    printf 'Running version:  fake\nRunning image:    %s\nNext boot image:  %s\nPrevious image:   %s\nReboot pending:   %s\n' \
+      "$(cat "$d/running")" "$(cat "$d/next")" "$(cat "$d/previous")" "$pending"
+    ;;
+  "image stage")
+    shift 2
+    img="$(opt --image "$@")"
+    sig="$(opt --signature "$@")"
+    [ -n "$sig" ] || sig="$img.sig"
+    if [ "${FAKE_ACCEPT_ALL:-0}" != 1 ] && { [ "$(cat "$img")" != candidate-uki ] || [ "$(cat "$sig")" != candidate-sig-K ]; }; then
+      echo "rpc error: code = PermissionDenied desc = the image signature does not verify against the release certificate" >&2
+      exit 1
+    fi
+    for _ in $(seq 1 $(( ${FAKE_STAGE_SECONDS:-2} * 10 ))); do
+      [ -f "$d/off" ] && { echo "rpc error: code = Unavailable desc = connection reset" >&2; exit 1; }
+      sleep 0.1
+    done
+    cp "$d/next" "$d/previous"
+    sha256sum "$img" | cut -d' ' -f1 > "$d/next"
+    echo "staged"
+    ;;
+  "image rollback")
+    cp "$d/next" "$d/tmp"
+    cp "$d/previous" "$d/next"
+    cp "$d/tmp" "$d/previous"
+    echo "rolled back"
+    ;;
+  "image activate")
+    echo $(( $(cat "$d/boots") + 1 )) > "$d/boots"
+    cp "$d/next" "$d/running"
+    : > "$s/down-once-$addr"
+    echo "rebooting into the staged image"
+    ;;
+  "ceremony start")
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -days 30 \
+      -keyout "$d/ca.key" -out "$d/ca.crt" -subj "/CN=fake root $role" \
+      -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+    printf 'KEY_CREATED\nCERT_SIGNED\nMANIFEST_WRITTEN\nADMIN_ROTATED\nCOMPLETE\n'
+    ;;
+  "identity show")
+    cat "$d/ca.crt"
+    [ -f "$d/parent.crt" ] && cat "$d/parent.crt"
+    true
+    ;;
+  "ca get-subordinate-csr" | "ca get-renewal-csr")
+    [ -f "$d/ca.key" ] || openssl ecparam -name secp384r1 -genkey -noout -out "$d/ca.key" 2>/dev/null
+    openssl req -new -key "$d/ca.key" -subj "/CN=fake intermediate" 2>/dev/null
+    ;;
+  "ca sign-subordinate")
+    shift 2
+    sign_ca "$(opt --csr "$@")" "$d/ca.key" "$d/ca.crt" "$d/signed.pem"
+    cat "$d/signed.pem" "$d/ca.crt"
+    ;;
+  "ca rotate-key")
+    openssl ecparam -name secp384r1 -genkey -noout -out "$d/rotation.key" 2>/dev/null
+    openssl req -new -key "$d/rotation.key" -subj "/CN=fake intermediate" 2>/dev/null
+    ;;
+  "ca submit-rotation")
+    shift 2
+    chain="$(opt --chain "$@")"
+    if [ "${FAKE_REKEY_SAME_KEY:-0}" = 1 ]; then
+      echo "rotated"
+      exit 0
+    fi
+    mv "$d/rotation.key" "$d/ca.key"
+    awk '/BEGIN CERTIFICATE/{n++} n==1' "$chain" > "$d/ca.crt"
+    echo "rotated"
+    ;;
+  "ca submit-subordinate-cert")
+    shift 2
+    chain="$(opt --chain "$@")"
+    awk '/BEGIN CERTIFICATE/{n++} n==1' "$chain" > "$d/ca.crt"
+    awk '/BEGIN CERTIFICATE/{n++} n==2' "$chain" > "$d/parent.crt"
+    echo "submitted"
+    ;;
+  "ca issue-leaf")
+    shift 2
+    openssl x509 -req -in "$(opt --csr "$@")" -CA "$d/ca.crt" -CAkey "$d/ca.key" -CAcreateserial -days 7 \
+      -out "$d/leaf.pem" 2>/dev/null
+    openssl x509 -in "$d/leaf.pem" -noout -serial | cut -d= -f2 | tr '[:upper:]' '[:lower:]' >> "$d/issued"
+    cat "$d/leaf.pem" "$d/ca.crt"
+    ;;
+  "ca revoke")
+    shift 2
+    opt --serial "$@" >> "$d/revoked"
+    echo "revoked $(opt --serial "$@")"
+    ;;
+  "ca list-issued")
+    tr '[:lower:]' '[:upper:]' < "$d/issued"
+    ;;
+  "audit verify")
+    echo "audit chain intact: 42 entries verified"
+    ;;
+  *)
+    echo "fake cryptosctl: unexpected command: $*" >&2
+    exit 1
+    ;;
+esac
