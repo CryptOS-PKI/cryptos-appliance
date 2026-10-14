@@ -129,6 +129,12 @@ for forbidden in bin/sh bin/bash bin/dash bin/ash bin/busybox sbin/getty sbin/ag
   fi
 done
 
+# Fixed modes, so the build host's umask does not reach the image (go build
+# and mkdir both honour it).
+find "$tree" -type d -exec chmod 0755 {} +
+find "$tree" -type f -perm /0111 -exec chmod 0755 {} +
+find "$tree" -type f ! -perm /0111 -exec chmod 0644 {} +
+
 # Reproducible squashfs: pinned mkfs time, no xattrs noise, xz compression.
 SOURCE_DATE_EPOCH="$(git -C "$root" log -1 --format=%ct)"
 mksquashfs "$tree" "$out/rootfs-$arch.squashfs" \
