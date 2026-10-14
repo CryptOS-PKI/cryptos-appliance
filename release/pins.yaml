@@ -1,0 +1,10 @@
+version: 1
+release: v0.1.0-rc.1
+repos:
+  cryptos-node:     {commit: 6bd5eaeda7242110482f74210f01212f00741f30}
+  cryptos-manager:  {commit: 13c1b8ca02e1f09c234a6366f042c0a4a0e29467}
+  cryptos-web:      {commit: f0d466dd8d430155b3c38f76439d061241f78554}
+  cryptos-release:  {commit: 045d92a3a435c5ceb02199ccff289782108443d7}
+  website:          {commit: ecb0de8e71ddac0cb6e5b11b2519a9af3dc8eaa2}
+upgrade_from:
+  - {repo: cryptos-node, commit: a77ae5bf55737dec83188fe61fb615fd2fe839e1}
