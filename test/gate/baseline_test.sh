@@ -133,29 +133,36 @@ out="$(
 )" || status=$?
 assert_status "clean run" 0 "$status"
 assert_contains "clean run reports the key dir" "SB_KEY=/dev/shm/" "$out"
-assert_contains "clean run caches the artifact" "$cache_dir/baseline-$(cache_key "$commit" amd64 vmware nodeid).iso" "$out"
+assert_contains "clean run reports the output path" "$cache_dir/baseline-$(cache_key "$commit" amd64 vmware nodeid).iso" "$out"
 
 artifact="$cache_dir/baseline-$(cache_key "$commit" amd64 vmware nodeid).iso"
 if [ -f "$artifact" ]; then
-  echo "ok   artifact cached"
+  echo "ok   artifact written"
   contents="$(cat "$artifact")"
-  assert_not_contains "cached artifact excludes key material" "test-key-material" "$contents"
+  assert_not_contains "written artifact excludes key material" "test-key-material" "$contents"
 else
-  echo "FAIL artifact cached: $artifact not found" >&2
+  echo "FAIL artifact written: $artifact not found" >&2
   fail=1
 fi
 
-# Case 2: cache hit on a second run (no BASELINE_BUILDER needed this time —
-# if the cache were not used, the missing builder would make the run fail).
+# Case 2: a second standalone run rebuilds rather than reusing the first
+# run's artifact. Standalone mode signs with its own throwaway key, shredded
+# at the end of the run; serving a prior run's ISO from a cache would hand
+# back an image anchored to a key that no longer exists. The two runs write
+# different content, so a reused artifact is distinguishable from a fresh
+# build.
 out=""
 status=0
 out="$(
   BASELINE_REMOTE="$work/remote.git" \
   BASELINE_CACHE_DIR="$cache_dir" \
+  BASELINE_BUILDER='mkdir -p build/out && echo "SB_KEY=$SB_KEY SB_CERT=$SB_CERT" && printf "dummy iso run2\n" > "build/out/cryptos-${ARCH}-${PLATFORM}-nodeid.iso"' \
   bash "$script" "$commit" 2>&1
 )" || status=$?
-assert_status "cache hit" 0 "$status"
-assert_contains "cache hit message" "cache hit" "$out"
+assert_status "second run" 0 "$status"
+assert_not_contains "second run is not served from a cache" "cache hit" "$out"
+second_contents="$(cat "$artifact")"
+assert_status "second run rebuilds (artifact holds the new content)" "dummy iso run2" "$second_contents"
 
 # Case 3: a builder that leaks a key file into its output tree is caught
 # before anything is cached, and the leaked cache entry is not created.
