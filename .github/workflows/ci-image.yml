@@ -10,24 +10,23 @@ name: Image build (kernel, rootfs, UKI, release assets)
 #     ephemeral key signs the UKI and is stamped in as the upgrade anchor, to
 #     exercise rootfs:build and uki:sign. That key is discarded with the run,
 #     so NOTHING this path builds is uploaded, not even as an Actions artifact.
-#   - v* tags (or dispatch with release_assets): the release assets, built
-#     with `task iso:unsigned` and no Secure Boot variables at all. They carry
-#     no signature and no upgrade anchor, and nothing signs or attests them;
-#     users sign with their own key (docs/secure-boot.md). On a tag they are
-#     attached to that tag's release with SHA256SUMS and build-manifest.json,
-#     after build/release/check-unsigned.sh proves none of them is signed.
+#   - manual dispatch with release_assets: a build-only rehearsal of the
+#     release assets with `task iso:unsigned` and no Secure Boot variables at
+#     all. They carry no signature and no upgrade anchor, and nothing signs
+#     or attests them; users sign with their own key (docs/secure-boot.md).
+#     Nothing here is attached to anything. On a real v* tag, release.yml's
+#     own assets job builds and attaches them, after the ESXi gate passes.
 #
 # Not triggered by pull_request: the kernel compile is expensive, so it runs
-# on push to main, tags, and manual dispatch. Use workflow_dispatch on a
-# branch to validate image changes before merging.
+# on push to main and manual dispatch. Use workflow_dispatch on a branch to
+# validate image changes before merging.
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
     # Don't run an expensive image build for changes that can't affect the
     # image: docs, issue templates, and the sibling workflows. Editing
-    # ci-image.yml itself still builds. (Path filters do not apply to tags.)
+    # ci-image.yml itself still builds.
     paths-ignore:
       - "**.md"
       - "docs/**"
@@ -58,7 +57,7 @@ concurrency:
 jobs:
   build-image:
     name: Build and sign the UKI (ephemeral CI key, not published)
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') && !inputs.release_assets }}
+    if: ${{ !inputs.release_assets }}
     # amd64 -> ubuntu-24.04 (x86_64); arm64 -> the hosted arm64 runner.
     runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
@@ -135,11 +134,12 @@ jobs:
         run: rm -rf build/.work/ci
 
   # The release assets: unsigned, no upgrade anchor, built with no Secure Boot
-  # variables in the environment. Runs on v* tags, and on manual dispatch with
-  # release_assets to rehearse a release without publishing anything.
+  # variables in the environment. Manual dispatch only, to rehearse the build
+  # without attaching anything; release.yml builds and attaches them for real
+  # on a v* tag, after the ESXi gate passes.
   release-assets:
     name: Build the unsigned release assets
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release_assets }}
+    if: ${{ inputs.release_assets }}
     runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     env:
@@ -260,57 +260,7 @@ jobs:
           bash build/release/check-unsigned_test.sh
           bash build/release/check-unsigned.sh dist
 
-      - name: Upload the release assets for the attach job
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: cryptos-${{ env.ARCH }}-release-assets
-          path: dist/
-          if-no-files-found: error
-          retention-days: 1
-
-  # On a v* tag, attach the unsigned assets to the tag's release. Publishing
-  # the Release Drafter draft is what creates the tag, so the release exists;
-  # this job only uploads files to it and never creates, publishes or edits a
-  # release. It runs the check again on exactly the files it attaches.
-  attach-assets:
-    name: Attach the unsigned assets to the release
-    needs: release-assets
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write # upload assets to the existing release
-    env:
-      ARCH: ${{ github.event.inputs.arch || 'amd64' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Download the release assets
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
-        with:
-          name: cryptos-${{ env.ARCH }}-release-assets
-          path: dist
-
-      - name: Install the check's tools
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends sbsigntool xorriso mtools
-
-      - name: Check nothing is signed
-        run: bash build/release/check-unsigned.sh dist
-
-      - name: Attach the assets to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            echo "no release for $TAG: publish the draft (which creates the tag) before assets can be attached" >&2
-            exit 1
-          fi
-          gh release upload "$TAG" dist/* --clobber
+      # Deliberately no upload-artifact step: this is a dispatch-only rehearsal
+      # of the build, and nothing it produces is attached anywhere. On a real
+      # v* tag, release.yml's own assets job builds and attaches these files,
+      # after the ESXi gate passes.
