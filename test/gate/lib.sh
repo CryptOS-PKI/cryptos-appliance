@@ -451,6 +451,11 @@ pki:
 EOF
 }
 
+# The Intermediate's pki.scep carries require_approval: true on tls-server
+# from install, because changing pki.scep takes effect only at the next
+# boot: setting it here, rather than pushing it live later, is what lets a
+# SCEP enrolment land PENDING for cryptos-manager's e2e run to approve or
+# reject over the API instead of issuing on the spot.
 gate_int_config() {
   local name="$1" addr="$2" cn="$3" root_pem="$4"
   cat <<EOF
@@ -481,6 +486,11 @@ $(gate_indent '      ' "$root_pem")
       key_usage: [digital_signature]
       ext_key_usage: [server_auth]
       allow_request_sans: true
+  scep:
+    profiles:
+      - profile: tls-server
+        require_approval: true
+    allowed_identifier_suffixes: [gate.example.org]
 EOF
 }
 
