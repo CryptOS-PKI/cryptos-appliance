@@ -157,10 +157,19 @@ rekey_calls="$(grep -oE '^NODE [a-z]+ ARGS .*<ca> <(rotate-key|sign-subordinate|
 assert_contains "the re-key runs rotate-key, the Root's sign-subordinate, submit-rotation" \
   "intermediate,rotate-key,root,sign-subordinate,intermediate,submit-rotation" "$rekey_calls"
 
-# Redaction: no lab value in the output or the summary.
+# Redaction: no lab value in the output or the summary. Under GitHub Actions
+# the gate first prints one ::add-mask:: workflow command per value; the
+# runner consumes those lines and never shows them, so they are the only place
+# a raw value may appear, and they must come before any other output.
+out_shown="$(printf '%s\n' "$out" | grep -v '^::add-mask::' || true)"
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  first_other="$(printf '%s\n' "$out" | grep -n -v '^::add-mask::' | head -1 | cut -d: -f1)"
+  last_mask="$(printf '%s\n' "$out" | grep -n '^::add-mask::' | tail -1 | cut -d: -f1)"
+  assert_status "add-mask lines come before any other output" 0 "$([ -z "$last_mask" ] || [ -z "$first_other" ] || [ "$last_mask" -lt "$first_other" ]; echo $?)"
+fi
 for v in esx-lab.example.org gate-nfs-example "Gate Net Example" "$GATE_ESXI_POOL" 192.0.2.2 198.51.100. \
   gate-svc example-Passw0rd-xyz example-gate-account ntp.example.org "$GATE_ESXI_THUMBPRINT"; do
-  assert_not_contains "output redacts $v" "$v" "$out"
+  assert_not_contains "output redacts $v" "$v" "$out_shown"
   assert_not_contains "summary redacts $v" "$v" "$summary"
 done
 
