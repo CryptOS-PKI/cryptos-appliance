@@ -57,6 +57,19 @@ gate's live Root and Intermediate (the Intermediate first, since it is the one `
 drives issuance and SCEP against), with neither marked spare, so the manager's own rekey, escrow,
 enrolment and decommission steps report their own skip on a routine gate run.
 
+### SCEP on the Intermediate
+
+Step 1's Intermediate config (`gate_int_config`, `test/gate/lib.sh`) carries a `pki.scep` block
+from install: the `tls-server` profile with `require_approval: true`, and
+`allowed_identifier_suffixes: [gate.example.org]`. `pki.scep` only takes effect at the next boot,
+so it has to be in the config the node installs with; pushing it live later would need a reboot the
+gate's own config-push step deliberately never triggers. With it there, `GetConfig` reports a
+non-empty `pki.scep.profiles` and a SCEP enrolment against the Intermediate lands PENDING rather
+than issuing on the spot, which is what lets cryptos-manager's `test/e2e/esxi` SCEP step
+(`CryptOS-PKI/cryptos-manager#38`) mint a challenge and, once it carries a real SCEP client
+(`CryptOS-PKI/cryptos-manager#207`), approve or reject the enrolment over the API instead of
+skipping.
+
 ## Keys
 
 - K (the run's Secure Boot key), W (the negative key), the bootstrap admin identity and every leaf
