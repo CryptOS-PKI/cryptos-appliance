@@ -19,7 +19,7 @@ root="$(cd "$here/../.." && pwd)"
 pins_file="${1:-$root/release/pins.yaml}"
 go_mod="${GUARD_GO_MOD:-$root/go.mod}"
 
-required_repos=(cryptos-node cryptos-manager cryptos-web cryptos-release website)
+required_repos=(cryptos-node cryptos-manager cryptos-web website)
 
 declare -A repo_commit
 upgrade_repo=()
