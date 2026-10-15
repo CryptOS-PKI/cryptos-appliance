@@ -191,11 +191,50 @@ step_build() {
   gate_check_builds
 }
 
+# ---- serving the candidate (after step B) --------------------------------------------
+
+# gate_serve_start begins serving step B's candidate.uki over plain HTTP, so
+# cryptos-manager's test/e2e/esxi (step 14) can stage it as a real signed
+# image through E2E_IMAGE_URL. It binds the runner's own address on the lab
+# network (gate_lab_addr), never loopback, since the gate's VMs fetch it
+# themselves, and keeps running until gate_serve_stop, which gate_cleanup
+# always calls. A run that never built a candidate (GATE_ONLY left out B), or
+# whose lab address can't be found, has nothing to serve: this logs why and
+# returns success rather than failing the gate, since serving is step 14's
+# prerequisite, not one of the gate's own proofs; step 14 reports its own
+# skip when there is nothing to fetch.
+gate_serve_start() {
+  local dir="$GATE_WORK/candidate" addr port deadline
+  [ -f "$dir/candidate.uki" ] || { gate_log "no candidate built; not serving an image"; return 0; }
+  addr="$(gate_lab_addr "$(gate_esxi_host)")" || { gate_log "not serving the candidate: could not find the runner's lab address"; return 0; }
+  gate_mask_now "$addr"
+  port="${GATE_SERVE_PORT:-8099}"
+  ( cd "$dir" && exec python3 -m http.server "$port" --bind "$addr" >"$GATE_WORK/serve.log" 2>&1 ) &
+  echo $! > "$GATE_WORK/serve.pid"
+  deadline=$((SECONDS + 10))
+  while [ "$SECONDS" -lt "$deadline" ] && ! gate_tcp_up "$addr" "$port"; do sleep 0.2; done
+  if ! gate_tcp_up "$addr" "$port"; then
+    gate_log "the candidate image server never answered; step 14 will skip"
+    return 0
+  fi
+  gate_state_set serve-url "http://$addr:$port/candidate.uki"
+  gate_log "serving the candidate image for step 14"
+}
+
+# gate_serve_stop ends gate_serve_start's server, if one is running. Called
+# unconditionally from gate_cleanup, win or lose.
+gate_serve_stop() {
+  [ -f "$GATE_WORK/serve.pid" ] || return 0
+  kill "$(cat "$GATE_WORK/serve.pid")" 2>/dev/null || true
+  wait "$(cat "$GATE_WORK/serve.pid")" 2>/dev/null || true
+  rm -f "$GATE_WORK/serve.pid"
+}
+
 # ---- main ---------------------------------------------------------------------------
 
 gate_preflight() {
   local t missing=()
-  for t in "${GATE_GOVC:-govc}" openssl perl curl sbsign sbverify objcopy unsquashfs cpio gzip go task timeout shred git sha256sum; do
+  for t in "${GATE_GOVC:-govc}" openssl perl curl sbsign sbverify objcopy unsquashfs cpio gzip go task timeout shred git sha256sum python3; do
     command -v "$t" >/dev/null 2>&1 || missing+=("$t")
   done
   if [ "${#missing[@]}" -ne 0 ]; then
@@ -207,6 +246,7 @@ gate_preflight() {
 gate_cleanup() {
   local rc=$?
   set +e
+  gate_serve_stop
   if [ -n "${GATE_WORK:-}" ] && [ -d "$GATE_WORK" ]; then
     gate_teardown >/dev/null 2>&1
   fi
@@ -238,6 +278,7 @@ gate_main() {
 
   gate_log "run $GATE_RUN_ID"
   gate_step B "build: baseline and candidate signed with K, negative image signed with W" step_build
+  gate_serve_start
   gate_step 1 "baseline Root and Intermediate from the ISO, ceremonies, leaf issued, one revoked" step_baseline B
   gate_step 2 "candidate cryptosctl against the baseline nodes" step_cli_compat 1
   gate_step 3 "image signed by another key and unsigned image refused, nothing written" step_refused 1
@@ -250,6 +291,7 @@ gate_main() {
   gate_step 10 "Intermediate re-key: new key chains to the Root, issues, revocations and audit chain kept" step_rekey 8 9
   gate_step 11 "fresh install of the candidate (nodeid) and its ceremony" step_fresh B
   gate_step 12 "Secure Boot on with K in db, W refused at boot" step_secure_boot
+  gate_step 14 "cryptos-manager's full write-path e2e run against the gate's live Root and Intermediate" step_e2e_manager 1 B
   gate_step 13 "teardown: VMs destroyed, datastore folder removed" step_teardown
 
   gate_summary
