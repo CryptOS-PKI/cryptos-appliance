@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unit test for guard.sh: builds throwaway bare repos to stand in for the
-# five pinned repos (fetched over file://, never github.com) plus a throwaway
+# four pinned repos (fetched over file://, never github.com) plus a throwaway
 # go.mod, and checks the guard accepts a good pin set and rejects a missing
 # pin, a short SHA, an unreachable commit and a cryptos-node pin that
 # disagrees with go.mod.
@@ -60,7 +60,6 @@ mkbare() {
 node_sha="$(mkbare cryptos-node)"
 manager_sha="$(mkbare cryptos-manager)"
 web_sha="$(mkbare cryptos-web)"
-release_sha="$(mkbare cryptos-release)"
 website_sha="$(mkbare website)"
 
 # A commit that exists nowhere (not pushed to any remote): 40 hex chars,
@@ -71,7 +70,6 @@ remotes_env=(
   "GUARD_REMOTE_CRYPTOS_NODE=$work/remotes/cryptos-node.git"
   "GUARD_REMOTE_CRYPTOS_MANAGER=$work/remotes/cryptos-manager.git"
   "GUARD_REMOTE_CRYPTOS_WEB=$work/remotes/cryptos-web.git"
-  "GUARD_REMOTE_CRYPTOS_RELEASE=$work/remotes/cryptos-release.git"
   "GUARD_REMOTE_WEBSITE=$work/remotes/website.git"
 )
 
@@ -98,10 +96,9 @@ repos:
   cryptos-node:     {commit: $1}
   cryptos-manager:  {commit: $2}
   cryptos-web:      {commit: $3}
-  cryptos-release:  {commit: $4}
-  website:          {commit: $5}
+  website:          {commit: $4}
 upgrade_from:
-  - {repo: cryptos-node, commit: $6}
+  - {repo: cryptos-node, commit: $5}
 EOF
   printf '%s' "$file"
 }
@@ -113,14 +110,14 @@ run_guard() {
 
 # Case 1: a good pin set, everything reachable, go.mod matches.
 gomod="$(write_gomod "${node_sha:0:12}")"
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$release_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
 assert_status "good pin set" 0 "$status"
 assert_contains "good pin set message" "guard: OK" "$out"
 
-# Case 2: a missing pin (cryptos-release absent from the repos block).
+# Case 2: a missing pin (website absent from the repos block).
 pins="$work/pins-missing.yaml"
 cat > "$pins" <<EOF
 version: 1
@@ -129,7 +126,6 @@ repos:
   cryptos-node:     {commit: $node_sha}
   cryptos-manager:  {commit: $manager_sha}
   cryptos-web:      {commit: $web_sha}
-  website:          {commit: $website_sha}
 upgrade_from:
   - {repo: cryptos-node, commit: $node_sha}
 EOF
@@ -137,10 +133,10 @@ out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
 assert_status "missing pin" 1 "$status"
-assert_contains "missing pin message" "missing pin: cryptos-release" "$out"
+assert_contains "missing pin message" "missing pin: website" "$out"
 
 # Case 3: a short SHA.
-pins="$(write_pins "${node_sha:0:12}" "$manager_sha" "$web_sha" "$release_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "${node_sha:0:12}" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
@@ -148,16 +144,16 @@ assert_status "short SHA" 1 "$status"
 assert_contains "short SHA message" "not a full 40-hex" "$out"
 
 # Case 4: an unreachable commit (well-formed, pushed nowhere).
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$unreachable_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$unreachable_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
 assert_status "unreachable commit" 1 "$status"
-assert_contains "unreachable commit message" "unreachable commit for cryptos-release" "$out"
+assert_contains "unreachable commit message" "unreachable commit for website" "$out"
 
 # Case 5: cryptos-node pin disagrees with go.mod.
 other_gomod="$(write_gomod "${manager_sha:0:12}")"
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$release_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$other_gomod" 2>&1)" || status=$?
