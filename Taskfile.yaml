@@ -134,6 +134,7 @@ tasks:
       - bash test/gate/baseline_test.sh
       - bash test/gate/redact_test.sh
       - bash test/gate/run_test.sh
+      - bash test/gate/serve_test.sh
 
   release:guard:
     desc: "Check release/pins.yaml: every pin present, a full commit, reachable, and cryptos-node matches go.mod"
