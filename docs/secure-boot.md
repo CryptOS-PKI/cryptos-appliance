@@ -1,10 +1,11 @@
 # Secure Boot: build and sign with your own key
 
-CryptOS does not ship a signing key, and it does not ask you to trust one. You
-generate your own Secure Boot key, build the image with it, and enroll its
-certificate on the machines you run. The same certificate becomes the node's
-upgrade anchor, so the key that makes an image bootable is also the only key
-that can replace it later.
+Every image you run is signed by you. CryptOS does not ship a signing key,
+and it does not ask you to trust one. You generate your own Secure Boot key,
+build the image with it (or sign a downloaded unsigned image with it), and
+enroll its certificate on the machines you run. The same certificate becomes
+the node's upgrade anchor, so the key that makes an image bootable is also
+the only key that can replace it later.
 
 > [!IMPORTANT]
 > **The project signs nothing.** A release carries the source, and unsigned
