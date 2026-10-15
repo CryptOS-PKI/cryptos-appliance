@@ -8,13 +8,13 @@ the node's upgrade anchor, so the key that makes an image bootable is also
 the only key that can replace it later.
 
 > [!IMPORTANT]
-> **The project never signs an image.** No release carries a key the project
-> generated. The release attaches an unsigned image (see
-> [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets)):
-> it boots only with Secure Boot off and has no upgrade anchor, so a node
-> installed from it can never be upgraded in place. To run CryptOS for real,
-> sign the downloaded image with your own key, or build it yourself with your
-> own key, by following this guide.
+> **The project signs nothing.** A release carries the source, and unsigned
+> images: no Authenticode signature, no upgrade anchor, and no signature or
+> attestation of any kind. Nothing the project ships is signed by, carries, or
+> trusts a key the project generated. Sign the unsigned image with your own key
+> to boot it with Secure Boot on, or build and sign from source by following
+> this guide, which is the only way to get a node you can upgrade in place. See
+> [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets).
 
 ## What the key is used for
 
@@ -409,21 +409,34 @@ task iso:unsigned PLATFORM=vmware STATEKEY=nodeid
 | `cryptos-amd64.uki.unsigned` | the UKI, no Authenticode signature, no anchor |
 | `cryptos-amd64-vmware-nodeid-unsigned-<build>.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
-This is how the public release assets are built. On a `v*` tag, CI runs
+This is the recipe behind the release assets. On a `v*` tag, CI runs
 `task iso:unsigned` for `STATEKEY=tpm` and `STATEKEY=nodeid` with no Secure
-Boot variables set, and attaches the UKIs (renamed
-`cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned`), the ISOs, `cryptosctl`
-for linux and darwin on amd64 and arm64 (each also named with `<build>`), a
-`build-manifest.json` build record (the full and short commit, dirty state,
-version and build tag), and a `SHA256SUMS` -- never a project-signed image or
-any attestation. The per-run key the CI smoke build uses on `main` signs and
-anchors only images that are thrown away with the run; none of them is
-uploaded.
+Boot variables set, and attaches to the tag's release:
 
-Verify what you downloaded before using it: check it against `SHA256SUMS`
-(`sha256sum -c SHA256SUMS`), or, since the build is meant to be bit-for-bit
-reproducible, rebuild from the same tag with the steps above and compare the
-hash yourself.
+| Release file | What it is |
+|---|---|
+| `cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned` | the unsigned UKI for each state-key mode |
+| `cryptos-amd64-vmware[-nodeid]-unsigned-<build>.iso` | the installer ISO around it |
+| `cryptosctl-<os>-<arch>-<build>` | `cryptosctl` for linux and darwin on amd64 and arm64 |
+| `build-manifest.json` | the commit, build tag and file names |
+| `SHA256SUMS` | the SHA-256 of every other file |
+
+Before anything is attached, `build/release/check-unsigned.sh` fails the run if
+any UKI, on its own or inside an ISO, carries an Authenticode signature
+(`sbverify --list` must say "No signature table present"), if any signature,
+certificate or attestation file is present, or if `SHA256SUMS` does not cover
+every file. There is nothing else to verify: no signature, attestation,
+provenance or cosign bundle is made for any release file.
+
+Check a download against `SHA256SUMS`:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+or rebuild the same files from the tag with the commands above and compare the
+hashes. The per-run key the CI smoke build uses on `main` signs and anchors only
+images that are thrown away with the run; none of them is uploaded.
 
 Check that a build carries no anchor with the grep from step 5 against your own
 certificate, or, without one, by looking for any base64 X.509 certificate in

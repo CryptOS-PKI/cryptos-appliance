@@ -125,6 +125,7 @@ tasks:
     cmds:
       - bash build/ci/artifact-name_test.sh
       - bash build/ci/build-manifest_test.sh
+      - bash build/release/check-unsigned_test.sh
       - bash build/release/guard_test.sh
       - bash test/gate/baseline_test.sh
 
