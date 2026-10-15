@@ -59,8 +59,6 @@ network name or credential.
 | `GATE_ESXI_DATASTORE` | the only datastore the gate writes to (ISOs, serial logs, VM disks) |
 | `GATE_ESXI_POOL` | the only resource pool the gate creates VMs in |
 | `GATE_ESXI_NETWORK` | the port group the gate VMs attach to |
-| `GATE_CIDR`, `GATE_GATEWAY` | the gate network and its gateway |
-| `GATE_ADDRS` | space-separated static addresses for the gate nodes, outside the DHCP range (the gate uses three) |
 | `GATE_NTP` | the NTP server the nodes sync against |
 | `GATE_SNEAKERS_SECRET` | the name of the vault secret that holds the ESXi account |
 
@@ -80,25 +78,29 @@ Where the gate writes:
 
 One gate runs at a time; the release workflow's concurrency group enforces it.
 
-### Finding a node booted from the ISO
+### Finding a node's address
 
-A node booted from the installer ISO takes an address from DHCP and shows it only on its
-framebuffer console. The gate finds it by the VM's MAC, in this order:
-
-1. `GATE_DISCOVER_CMD`, a runner-local command that takes the MAC and prints the address;
-2. `govc vm.ip -esxcli`, which needs the host's `/Net/GuestIPHack` setting enabled;
-3. the runner's neighbour table after a ping sweep of `GATE_CIDR` (the runner must sit on the gate
-   network, and the prefix must be /22 or longer).
-
-The installed nodes then use the static addresses from `GATE_ADDRS`.
+There is no reserved address pool: a gate VM takes a normal DHCP address on the lab LAN, both
+during maintenance and, since it keeps whatever address it is first handed, once it is installed.
+The appliance's image carries no VMware Tools guest agent to self-report that address the plain
+way, so `gate_discover_addr` (`test/gate/lib.sh`) reads it from the ESX host's own ARP/DHCP
+snooping instead (`govc vm.ip -esxcli`, which needs the host's `/Net/GuestIPHack` setting enabled),
+confirmed once its HTTPS listener answers. The node's `MachineConfig` gets that same address with
+an assumed `/24` and a synthetic gateway at its first host address (`gate_gateway_for`): the gate's
+own nodes, each other and the runner all sit in one lab VLAN that is never larger than a `/24`, and
+nothing the gate does ever routes off it, so the gateway only has to be a valid address in the
+right prefix for the node to accept it as its default route, never actually answer. A VM that never
+gets an address fails the step, naming the VM, never an address.
 
 ## Lab values stay out of the logs
 
 The repository and its Actions logs are public. The gate sends its own stdout and stderr through a
-redaction filter (`gate_redact`) before anything is printed: the value of every setting above and
-of the account, the host name inside the URL, each address in `GATE_ADDRS` (as `[GATE_ADDR_<n>]`)
-and any other IPv4 address (as `[ipv4]`) are replaced at the source. The step table it writes is
-filtered the same way. In Actions the values are also registered with `::add-mask::`. The gate
+redaction filter (`gate_redact`) before anything is printed: the value of every setting above, the
+account, the host name inside the URL, and any IPv4 address, including a node's DHCP address (as
+`[ipv4]`), are replaced at the source. The step table it writes is filtered the same way. In
+Actions the values are also registered with `::add-mask::`; an address discovered mid-run is
+registered the moment it is learned (`gate_mask_now`), since by then the redaction filter is
+already running and would otherwise mask its own placeholder instead of the value. The gate
 uploads nothing: no artifacts, serial logs or govc output.
 
 ## Running it by hand

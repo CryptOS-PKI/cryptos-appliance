@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Unit test for gate_redact (test/gate/lib.sh): every GATE_* setting, the ESXi
-# account, the host inside GATE_ESXI_URL, each address in GATE_ADDRS and any
-# other IPv4 address are replaced before a line leaves the gate, and ordinary
-# text (versions, OIDs, step names) passes through untouched.
+# account, the host inside GATE_ESXI_URL and any IPv4 address (the gate's
+# nodes take a normal DHCP address; there is no reserved pool to name) are
+# replaced before a line leaves the gate, and ordinary text (versions, OIDs,
+# step names) passes through untouched. It also covers gate_mask_now, which
+# registers a value discovered at run time with Actions' log masker directly,
+# since by the time it is discovered the redaction pipe is already live and
+# would turn the raw value into its placeholder before Actions ever saw it.
 #
 # Usage: test/gate/redact_test.sh
 set -euo pipefail
@@ -38,9 +42,6 @@ export GATE_ESXI_THUMBPRINT="AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:
 export GATE_ESXI_DATASTORE="gate-nfs-example"
 export GATE_ESXI_POOL="/ha-datacenter/host/esx-lab.example.org/Resources/cryptos-gate"
 export GATE_ESXI_NETWORK="Gate Net (example)"
-export GATE_CIDR="192.0.2.0/24"
-export GATE_GATEWAY="192.0.2.1"
-export GATE_ADDRS="192.0.2.21 192.0.2.22 192.0.2.23 192.0.2.24 192.0.2.25 192.0.2.26 192.0.2.27 192.0.2.28"
 export GATE_NTP="ntp.example.org"
 export GATE_SNEAKERS_SECRET="example-gate-account"
 export GATE_ESXI_USERNAME="gate-svc"
@@ -54,23 +55,19 @@ assert_eq "thumbprint" "thumbprint [GATE_ESXI_THUMBPRINT]" "$(r "thumbprint $GAT
 assert_eq "datastore" "[[GATE_ESXI_DATASTORE]] cryptos-gate-1/x.iso" "$(r "[gate-nfs-example] cryptos-gate-1/x.iso")"
 assert_eq "pool" "pool [GATE_ESXI_POOL]" "$(r "pool $GATE_ESXI_POOL")"
 assert_eq "network with spaces and brackets" "net [GATE_ESXI_NETWORK]" "$(r "net Gate Net (example)")"
-assert_eq "CIDR" "cidr [GATE_CIDR]" "$(r "cidr 192.0.2.0/24")"
-assert_eq "gateway" "gw [GATE_GATEWAY]" "$(r "gw 192.0.2.1")"
-assert_eq "each gate address by index" "root [GATE_ADDR_1]:443 int [GATE_ADDR_2] last [GATE_ADDR_8]" \
-  "$(r "root 192.0.2.21:443 int 192.0.2.22 last 192.0.2.28")"
 assert_eq "NTP" "ntp [GATE_NTP]" "$(r "ntp ntp.example.org")"
 assert_eq "secret name" "secret [GATE_SNEAKERS_SECRET]" "$(r "secret example-gate-account")"
 assert_eq "username" "user [GATE_ESXI_USERNAME]" "$(r "user gate-svc")"
 assert_eq "password with regex metacharacters" "pw [GATE_ESXI_PASSWORD] end" "$(r "pw $GATE_ESXI_PASSWORD end")"
-assert_eq "a DHCP address outside GATE_ADDRS" "maintenance at [ipv4]" "$(r "maintenance at 198.51.100.77")"
-assert_eq "an address in a URL" "fetch http://[GATE_ADDR_2]/crl" "$(r "fetch http://192.0.2.22/crl")"
+assert_eq "a node's DHCP address" "maintenance at [ipv4]" "$(r "maintenance at 198.51.100.77")"
+assert_eq "an address in a URL" "fetch http://[ipv4]/crl" "$(r "fetch http://192.0.2.22/crl")"
 
 assert_eq "versions pass through" "kernel 6.12.94 go1.26.1 v0.1.0-rc.1" "$(r "kernel 6.12.94 go1.26.1 v0.1.0-rc.1")"
 assert_eq "OIDs pass through" "policy 1.3.6.1.4.1.55555.1.2" "$(r "policy 1.3.6.1.4.1.55555.1.2")"
 assert_eq "step text passes through" "| 4 | power loss during the ESP write | pass |" "$(r "| 4 | power loss during the ESP write | pass |")"
 
 # Many lines, mixed stdout/stderr text: nothing of any value survives.
-all="$(printf '%s\n' "$GATE_ESXI_URL" "$GATE_ESXI_DATASTORE" "$GATE_ESXI_NETWORK" "$GATE_ESXI_PASSWORD" "$GATE_ADDRS" "esx-lab.example.org" | gate_redact)"
+all="$(printf '%s\n' "$GATE_ESXI_URL" "$GATE_ESXI_DATASTORE" "$GATE_ESXI_NETWORK" "$GATE_ESXI_PASSWORD" "192.0.2.21" "esx-lab.example.org" | gate_redact)"
 for v in esx-lab.example.org gate-nfs-example "Gate Net" "p@ss" 192.0.2.2 ; do
   assert_not_contains "nothing survives: $v" "$v" "$all"
 done
@@ -94,6 +91,15 @@ assert_eq "line-buffered" "first line [GATE_ESXI_USERNAME]" "$(cat "$fifo_dir/ou
 exec 7>&-
 wait "$redact_pid"
 rm -rf "$fifo_dir"
+
+# gate_mask_now: registers a run-time-discovered value with Actions' log
+# masker. Outside Actions it is silent; GATE_RAW_FD defaults to stdout (1)
+# until gate_start_redaction saves the real one, so this is directly
+# observable here without a redirection running.
+out="$(GITHUB_ACTIONS=true bash -c "source '$here/lib.sh'; gate_mask_now '198.51.100.55'")"
+assert_eq "gate_mask_now registers the value in Actions" "::add-mask::198.51.100.55" "$out"
+out="$(bash -c "source '$here/lib.sh'; gate_mask_now '198.51.100.55'")"
+assert_eq "gate_mask_now is silent outside Actions" "" "$out"
 
 if [ "$fail" -ne 0 ]; then
   echo "redact_test: FAILED" >&2

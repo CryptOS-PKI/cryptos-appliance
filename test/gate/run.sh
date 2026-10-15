@@ -9,10 +9,11 @@
 # Settings come from the runner-local file /etc/cryptos-gate/lab-esxi.env
 # (GATE_ENV_FILE overrides the path) or, for a local run, from the
 # environment: GATE_ESXI_URL, GATE_ESXI_THUMBPRINT, GATE_ESXI_DATASTORE,
-# GATE_ESXI_POOL, GATE_ESXI_NETWORK, GATE_CIDR, GATE_GATEWAY, GATE_ADDRS
-# (space-separated, at least 3), GATE_NTP, and the ESXi account as
+# GATE_ESXI_POOL, GATE_ESXI_NETWORK, GATE_NTP, and the ESXi account as
 # GATE_ESXI_USERNAME / GATE_ESXI_PASSWORD (exported by the runner wrapper,
-# which fetches it from Sneakers). See docs/release-gate.md.
+# which fetches it from Sneakers). See docs/release-gate.md. There is no
+# reserved address pool: the gate's VMs take a normal DHCP address on the lab
+# LAN, found per VM at run time.
 #
 # Every line the gate prints, and the step table it writes, passes through
 # gate_redact first, so no lab value reaches a log or the release notes.
@@ -30,7 +31,7 @@
 #                            step 4 (default 3)
 #   GATE_FIRSTBOOT_CUT_AFTER seconds into the candidate's first boot before the
 #                            power cut of step 6 (default 3)
-#   GATE_BOOT_TIMEOUT, GATE_DISCOVER_TIMEOUT, GATE_DISCOVER_CMD, GATE_DISK_GB
+#   GATE_BOOT_TIMEOUT, GATE_DISCOVER_TIMEOUT, GATE_DISK_GB
 #                            see test/gate/lib.sh
 #
 # Exit status: 0 every step passed or was skipped, 1 a step failed, 2 the
