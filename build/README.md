@@ -1,10 +1,10 @@
 # Image build pipeline
 
-> **Status: DRAFT.** These recipes are written but **not yet executed** —
-> they need a Linux build host (kernel toolchain, `mksquashfs`, `ukify`,
-> `sbsign`, `cpio`). Treat the shell scripts as reviewed skeletons, not
-> validated builds. The version pins (`ci/versions.env`) and the kernel
-> config (`kernel/cryptos.config`) are the reviewable, load-bearing parts.
+> **Status: validated on amd64.** This pipeline builds and signs the UKI on
+> every push to `main` (`.github/workflows/ci-image.yml`) and boots the
+> result in QEMU with `swtpm` and OVMF (`.github/workflows/ci-e2e-image.yml`).
+> arm64 is parameterized but not yet exercised; see "Open decisions to
+> finalize during Linux validation" below.
 
 ## Pipeline
 
