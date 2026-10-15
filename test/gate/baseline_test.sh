@@ -178,6 +178,64 @@ else
   echo "ok   leaked key: nothing cached"
 fi
 
+# Case 4: the gate's own key. With BASELINE_SB_KEY/BASELINE_SB_CERT the build
+# is signed and anchored with that key (the gate signs the baseline and the
+# candidate with one key K, so the baseline accepts the candidate), the image
+# and its UKI go to BASELINE_OUT_DIR, nothing is cached (the image carries a
+# per-run anchor), and the caller's key files are left for the caller to
+# shred.
+gate_keydir="$(mktemp -d /dev/shm/cryptos-gate-baseline-test.XXXXXX)"
+printf 'gate-key\n' > "$gate_keydir/sb.key"
+printf 'gate-cert\n' > "$gate_keydir/sb.crt"
+gate_out="$work/gate-out"
+gate_cache="$work/cache-gate"
+out=""
+status=0
+out="$(
+  BASELINE_REMOTE="$work/remote.git" \
+  BASELINE_CACHE_DIR="$gate_cache" \
+  BASELINE_SB_KEY="$gate_keydir/sb.key" BASELINE_SB_CERT="$gate_keydir/sb.crt" \
+  BASELINE_OUT_DIR="$gate_out" \
+  BASELINE_BUILDER='mkdir -p build/out && echo "SB_KEY=$SB_KEY SB_CERT=$SB_CERT" && printf "dummy iso\n" > "build/out/cryptos-${ARCH}-${PLATFORM}-nodeid.iso" && printf "dummy uki\n" > "build/out/cryptos-${ARCH}.uki" && printf "dummy sig\n" > "build/out/cryptos-${ARCH}.uki.sig"' \
+  bash "$script" "$commit" 2>&1
+)" || status=$?
+assert_status "gate key run" 0 "$status"
+assert_contains "gate key run uses the given key" "SB_KEY=$gate_keydir/sb.key SB_CERT=$gate_keydir/sb.crt" "$out"
+assert_contains "gate key run prints the output ISO" "$gate_out/baseline.iso" "$out"
+for f in baseline.iso baseline.uki baseline.uki.sig; do
+  if [ -f "$gate_out/$f" ]; then echo "ok   gate key run wrote $f"; else echo "FAIL gate key run: $gate_out/$f missing" >&2; fail=1; fi
+done
+if [ -n "$(find "$gate_cache" -type f 2>/dev/null)" ]; then
+  echo "FAIL gate key run: something was cached in $gate_cache" >&2
+  fail=1
+else
+  echo "ok   gate key run caches nothing"
+fi
+if [ -f "$gate_keydir/sb.key" ] && [ -f "$gate_keydir/sb.crt" ]; then
+  echo "ok   gate key run leaves the caller's key in place"
+else
+  echo "FAIL gate key run: the caller's key files were removed" >&2
+  fail=1
+fi
+rm -rf "$gate_keydir"
+
+# Case 5: a given key outside /dev/shm is refused before anything is fetched.
+disk_keydir="$work/disk-key"
+mkdir -p "$disk_keydir"
+printf 'k\n' > "$disk_keydir/sb.key"
+printf 'c\n' > "$disk_keydir/sb.crt"
+out=""
+status=0
+out="$(
+  BASELINE_REMOTE="$work/remote.git" \
+  BASELINE_SB_KEY="$disk_keydir/sb.key" BASELINE_SB_CERT="$disk_keydir/sb.crt" \
+  BASELINE_OUT_DIR="$work/disk-out" \
+  BASELINE_BUILDER='exit 0' \
+  bash "$script" "$commit" 2>&1
+)" || status=$?
+assert_status "key outside tmpfs is refused" 1 "$status"
+assert_contains "key outside tmpfs message" "/dev/shm" "$out"
+
 if [ "$fail" -ne 0 ]; then
   echo "baseline_test: FAILED" >&2
   exit 1

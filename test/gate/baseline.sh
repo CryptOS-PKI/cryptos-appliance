@@ -16,6 +16,15 @@
 #   BASELINE_PLATFORM   default vmware
 #   BASELINE_STATEKEY   default nodeid (the field's upgrade_from mode)
 #   BASELINE_CACHE_DIR  default <repo root>/.cache/gate/baseline
+#   BASELINE_SB_KEY     with BASELINE_SB_CERT: sign and anchor the baseline
+#   BASELINE_SB_CERT    with the caller's key instead of a key of its own (the
+#                       gate signs the baseline and the candidate with one key,
+#                       so the baseline accepts the candidate). Both must sit on
+#                       /dev/shm and are left for the caller to shred. Nothing
+#                       is cached in this mode: the image carries the caller's
+#                       per-run anchor.
+#   BASELINE_OUT_DIR    required with BASELINE_SB_KEY: where baseline.iso,
+#                       baseline.uki and baseline.uki.sig are written
 #   BASELINE_BUILDER    test-only: a shell snippet run instead of `task iso`,
 #                       in the checked-out commit with SB_KEY/SB_CERT/ARCH/
 #                       PLATFORM/STATEKEY exported. Never set this for a real
@@ -58,11 +67,29 @@ main() {
     exit 1
   fi
 
+  local ext_key="${BASELINE_SB_KEY:-}" ext_cert="${BASELINE_SB_CERT:-}" out_dir="${BASELINE_OUT_DIR:-}"
+  local external=0
+  if [ -n "$ext_key" ] || [ -n "$ext_cert" ]; then
+    external=1
+    [ -n "$ext_key" ] && [ -n "$ext_cert" ] && [ -n "$out_dir" ] || {
+      echo "baseline: BASELINE_SB_KEY, BASELINE_SB_CERT and BASELINE_OUT_DIR go together" >&2
+      exit 1
+    }
+    local f
+    for f in "$ext_key" "$ext_cert"; do
+      [ -f "$f" ] || { echo "baseline: key file not found: $f" >&2; exit 1; }
+      case "$(readlink -f "$f")" in
+        /dev/shm/*) ;;
+        *) echo "baseline: the signing key must sit on /dev/shm (tmpfs): $f" >&2; exit 1 ;;
+      esac
+    done
+  fi
+
   mkdir -p "$cache_dir"
   local key; key="$(cache_key "$commit" "$arch" "$platform" "$statekey")"
   local artifact="$cache_dir/baseline-$key.iso"
 
-  if [ -f "$artifact" ]; then
+  if [ "$external" = 0 ] && [ -f "$artifact" ]; then
     echo "baseline: cache hit for $key -> $artifact" >&2
     printf '%s\n' "$artifact"
     return 0
@@ -74,10 +101,14 @@ main() {
   # which left cleanup() reading an unbound $keydir. Plain variables outlive
   # that, and this script runs main() exactly once.
   workdir="$(mktemp -d)"
-  keydir="$(mktemp -d /dev/shm/cryptos-gate-baseline-key.XXXXXX)"
+  keydir=""
+  [ "$external" = 0 ] && keydir="$(mktemp -d /dev/shm/cryptos-gate-baseline-key.XXXXXX)"
   cleanup() {
-    shred -u "$keydir"/sb.* 2>/dev/null || true
-    rm -rf "$keydir" "$workdir"
+    if [ -n "$keydir" ]; then
+      shred -u "$keydir"/sb.* 2>/dev/null || true
+      rm -rf "$keydir"
+    fi
+    rm -rf "$workdir"
   }
   trap cleanup EXIT
 
@@ -86,11 +117,16 @@ main() {
   git -C "$workdir" fetch -q --depth 1 "$remote" "$commit"
   git -C "$workdir" checkout -q FETCH_HEAD
 
-  echo "baseline: generating the per-run Secure Boot key in $keydir (tmpfs)" >&2
-  ( cd "$workdir" && go build -o "$keydir/cryptos-sbkey" ./cmd/cryptos-sbkey )
-  "$keydir/cryptos-sbkey" --out-dir "$keydir" --cn "CryptOS gate (ephemeral)" --days 1
-
-  local sb_key="$keydir/sb.key" sb_cert="$keydir/sb.crt"
+  local sb_key sb_cert
+  if [ "$external" = 1 ]; then
+    echo "baseline: signing with the caller's key" >&2
+    sb_key="$ext_key" sb_cert="$ext_cert"
+  else
+    echo "baseline: generating the per-run Secure Boot key in $keydir (tmpfs)" >&2
+    ( cd "$workdir" && go build -o "$keydir/cryptos-sbkey" ./cmd/cryptos-sbkey )
+    "$keydir/cryptos-sbkey" --out-dir "$keydir" --cn "CryptOS gate (ephemeral)" --days 1
+    sb_key="$keydir/sb.key" sb_cert="$keydir/sb.crt"
+  fi
   [ -f "$sb_key" ] && [ -f "$sb_cert" ] || {
     echo "baseline: cryptos-sbkey did not write $sb_key / $sb_cert" >&2
     exit 1
@@ -115,6 +151,19 @@ main() {
   }
 
   check_no_stray_keys "$workdir" || exit 1
+
+  if [ "$external" = 1 ]; then
+    local uki="$workdir/build/out/cryptos-$arch.uki"
+    [ -f "$uki" ] || { echo "baseline: expected build output not found: $uki" >&2; exit 1; }
+    mkdir -p "$out_dir"
+    cp "$built" "$out_dir/baseline.iso"
+    cp "$uki" "$out_dir/baseline.uki"
+    if [ -f "$uki.sig" ]; then cp "$uki.sig" "$out_dir/baseline.uki.sig"; fi
+    check_no_stray_keys "$out_dir" || exit 1
+    echo "baseline: built $commit with the caller's key -> $out_dir (not cached)" >&2
+    printf '%s\n' "$out_dir/baseline.iso"
+    return 0
+  fi
 
   cp "$built" "$artifact"
   check_no_stray_keys "$cache_dir" || { rm -f "$artifact"; exit 1; }
