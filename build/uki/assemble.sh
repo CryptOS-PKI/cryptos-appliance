@@ -42,6 +42,22 @@ esac
 SOURCE_DATE_EPOCH="$(git -C "$root" log -1 --format=%ct)"
 export SOURCE_DATE_EPOCH
 
+# pack_initrd <dir>: a newc cpio of the tree, gzipped, the same bytes on
+# every build of one commit. The archive records each entry's mode, mtime and
+# inode, so the modes are fixed (a build host's umask would otherwise leak
+# in), every mtime is set to SOURCE_DATE_EPOCH, and --reproducible numbers the
+# inodes from the archive order instead of the build filesystem.
+pack_initrd() {
+  local dir="$1"
+  find "$dir" -type d -exec chmod 0755 {} +
+  find "$dir" -type f -perm /0111 -exec chmod 0755 {} +
+  find "$dir" -type f ! -perm /0111 -exec chmod 0644 {} +
+  find "$dir" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+  ( cd "$dir" && find . -print0 | LC_ALL=C sort -z \
+      | cpio --null --create --format=newc --owner=0:0 --reproducible 2>/dev/null \
+      | gzip -n ) > "$initrd"
+}
+
 mode="${ROOTFS_MODE:-squashfs}"
 initrd="$root/build/.work/initrd-$arch.cpio.gz"
 
@@ -56,15 +72,11 @@ case "$mode" in
     GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w $(bash "$root/build/ci/buildinfo.sh")" \
       -o "$shim/init" "$root/cmd/cryptos-switchroot"
     cp "$sqfs" "$shim/rootfs.squashfs"
-    ( cd "$shim" && find . -print0 | sort -z \
-        | cpio --null --create --format=newc --owner=0:0 2>/dev/null \
-        | gzip -n ) > "$initrd"
+    pack_initrd "$shim"
     ;;
   initramfs)
     # Pack the rootfs tree directly; the real init runs from it.
-    ( cd "$tree" && find . -print0 | sort -z \
-        | cpio --null --create --format=newc --owner=0:0 2>/dev/null \
-        | gzip -n ) > "$initrd"
+    pack_initrd "$tree"
     ;;
   *) echo "unknown ROOTFS_MODE: $mode (want squashfs|initramfs)" >&2; exit 1 ;;
 esac
