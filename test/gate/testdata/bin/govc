@@ -47,7 +47,11 @@ case "$cmd" in
     ;;
   vm.ip)
     name="$(last "$@")"
-    case "$(role_of "$name")" in
+    role="$(role_of "$name")"
+    if [ -n "${FAKE_NO_IP_ROLE:-}" ] && [ "$role" = "$FAKE_NO_IP_ROLE" ]; then
+      exit 0
+    fi
+    case "$role" in
       root) echo 198.51.100.11 ;;
       intermediate) echo 198.51.100.12 ;;
       fresh) echo 198.51.100.13 ;;

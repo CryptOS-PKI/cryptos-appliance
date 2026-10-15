@@ -55,9 +55,6 @@ lab_env() {
   export GATE_ESXI_DATASTORE="gate-nfs-example"
   export GATE_ESXI_POOL="/ha-datacenter/host/esx-lab.example.org/Resources/cryptos-gate"
   export GATE_ESXI_NETWORK="Gate Net Example"
-  export GATE_CIDR="192.0.2.0/24"
-  export GATE_GATEWAY="192.0.2.1"
-  export GATE_ADDRS="192.0.2.21 192.0.2.22 192.0.2.23 192.0.2.24 192.0.2.25 192.0.2.26 192.0.2.27 192.0.2.28"
   export GATE_NTP="ntp.example.org"
   export GATE_SNEAKERS_SECRET="example-gate-account"
   export GATE_ESXI_USERNAME="gate-svc"
@@ -73,9 +70,6 @@ run_gate() {
 198.51.100.11 root
 198.51.100.12 intermediate
 198.51.100.13 fresh
-192.0.2.21 root
-192.0.2.22 intermediate
-192.0.2.23 fresh
 EOF
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
     -keyout "$state/selfsigned.key" -out "$state/selfsigned.pem" -subj /CN=localhost 2>/dev/null
@@ -158,16 +152,22 @@ assert_contains "the re-key runs rotate-key, the Root's sign-subordinate, submit
   "intermediate,rotate-key,root,sign-subordinate,intermediate,submit-rotation" "$rekey_calls"
 
 # Redaction: no lab value in the output or the summary. Under GitHub Actions
-# the gate first prints one ::add-mask:: workflow command per value; the
-# runner consumes those lines and never shows them, so they are the only place
-# a raw value may appear, and they must come before any other output.
+# the gate prints one ::add-mask:: workflow command per setting known up
+# front, before anything else; the runner consumes those lines and never
+# shows them, so they are the only place a raw value may appear. A node's
+# address is masked the moment it is discovered, interleaved with the rest of
+# the run's output rather than up front, since it isn't known until then.
 out_shown="$(printf '%s\n' "$out" | grep -v '^::add-mask::' || true)"
 if [ "${GITHUB_ACTIONS:-}" = true ]; then
   first_other="$(printf '%s\n' "$out" | grep -n -v '^::add-mask::' | head -1 | cut -d: -f1)"
-  last_mask="$(printf '%s\n' "$out" | grep -n '^::add-mask::' | tail -1 | cut -d: -f1)"
-  assert_status "add-mask lines come before any other output" 0 "$([ -z "$last_mask" ] || [ -z "$first_other" ] || [ "$last_mask" -lt "$first_other" ]; echo $?)"
+  first_mask="$(printf '%s\n' "$out" | grep -n '^::add-mask::' | head -1 | cut -d: -f1)"
+  assert_status "the settings known up front are masked before anything else" 0 \
+    "$([ -z "$first_mask" ] || [ -z "$first_other" ] || [ "$first_mask" -lt "$first_other" ]; echo $?)"
+  for a in 198.51.100.11 198.51.100.12 198.51.100.13; do
+    assert_contains "a discovered address is masked the moment it is learned" "::add-mask::$a" "$out"
+  done
 fi
-for v in esx-lab.example.org gate-nfs-example "Gate Net Example" "$GATE_ESXI_POOL" 192.0.2.2 198.51.100. \
+for v in esx-lab.example.org gate-nfs-example "Gate Net Example" "$GATE_ESXI_POOL" 198.51.100. \
   gate-svc example-Passw0rd-xyz example-gate-account ntp.example.org "$GATE_ESXI_THUMBPRINT"; do
   assert_not_contains "output redacts $v" "$v" "$out_shown"
   assert_not_contains "summary redacts $v" "$v" "$summary"
@@ -268,16 +268,15 @@ assert_status "a missing account exits 2" 2 "$status"
 assert_contains "the missing account is named" "missing GATE_ESXI_PASSWORD" "$out"
 assert_not_contains "the user name is not printed" "gate-svc" "$out"
 
-# ---- case 6: too few addresses ------------------------------------------------------
+# ---- case 6: a VM that never gets an address fails fast, naming the VM, not an address
 lab_env
-export GATE_ADDRS="192.0.2.21 192.0.2.22"
-state="$work/few-addrs"
+state="$work/no-address"
 out=""
 status=0
-out="$(run_gate "$state" GATE_RUN_ID=t6 2>&1)" || status=$?
-assert_status "too few addresses exits 2" 2 "$status"
-assert_contains "the address count is explained" "GATE_ADDRS: the gate needs 3 addresses, got 2" "$out"
-assert_not_contains "the addresses are not printed" "192.0.2.2" "$out"
+out="$(run_gate "$state" GATE_RUN_ID=t6 GATE_DISCOVER_TIMEOUT=1 FAKE_NO_IP_ROLE=root 2>&1)" || status=$?
+assert_status "a VM with no address fails the gate" 1 "$status"
+assert_contains "the VM is named" "root: no address found for its VM within 1s" "$out"
+assert_not_contains "no address is printed for the failure" "198.51.100.11" "$out"
 
 shm_after="$(find /dev/shm -maxdepth 1 -name 'cryptos-gate-key.*' 2>/dev/null | sort)"
 assert_status "no key dir left on /dev/shm" "$shm_before" "$shm_after"

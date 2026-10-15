@@ -11,16 +11,16 @@ step_baseline() {
   gate_new_admin
   gate_upload_iso "$w/baseline/baseline.iso" baseline.iso
 
-  gate_root_config gate-root "$(gate_addr 1)" "$GATE_ROOT_CN" > "$w/root.yaml"
-  gate_install root 1 baseline.iso "$w/root.yaml"
+  gate_root_cfg() { gate_root_config gate-root "$1" "$GATE_ROOT_CN"; }
+  gate_install root 1 baseline.iso "$w/root.yaml" gate_root_cfg
   gate_ctl root ceremony start --config "$w/root.yaml" > "$w/root-ceremony.out"
   grep -q COMPLETE "$w/root-ceremony.out" || gate_fail "the Root ceremony did not report COMPLETE"
   gate_pin_ca root
   gate_ctl root identity show -o pem > "$w/root-bundle.pem"
   gate_first_cert "$w/root-bundle.pem" "$w/root.pem"
 
-  gate_int_config gate-intermediate "$(gate_addr 2)" "$GATE_INT_CN" "$w/root.pem" > "$w/int.yaml"
-  gate_install intermediate 2 baseline.iso "$w/int.yaml"
+  gate_int_cfg() { gate_int_config gate-intermediate "$1" "$GATE_INT_CN" "$w/root.pem"; }
+  gate_install intermediate 2 baseline.iso "$w/int.yaml" gate_int_cfg
   gate_ctl intermediate ca get-subordinate-csr > "$w/int.csr"
   gate_ctl root ca sign-subordinate --csr "$w/int.csr" --profile sub-ca > "$w/int-chain.pem"
   gate_ctl intermediate ca submit-subordinate-cert --chain "$w/int-chain.pem" >/dev/null

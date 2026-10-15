@@ -2,15 +2,19 @@
 # Shared helpers for the ESXi release gate (test/gate/run.sh and its steps).
 # Source it; it defines functions only and changes nothing on load.
 #
-# Lab values (the ESXi URL, thumbprint, datastore, pool, network, the
-# addresses, the NTP server and the account) never appear in the gate's
-# output: run.sh sends its own stdout and stderr through gate_redact before
-# anything is printed, and every error here names a setting, never its value.
+# Lab values (the ESXi URL, thumbprint, datastore, pool, network, the NTP
+# server and the account) never appear in the gate's output: run.sh sends its
+# own stdout and stderr through gate_redact before anything is printed, and
+# every error here names a setting or a VM, never an address.
+#
+# The gate's nodes take a normal DHCP address on the lab LAN (there is no
+# reserved pool to hand-maintain): gate_discover_addr finds it per VM at run
+# time, and every node just keeps the address it was first handed.
 
 # The settings the runner-local env file provides.
 gate_required_vars=(
   GATE_ESXI_URL GATE_ESXI_THUMBPRINT GATE_ESXI_DATASTORE GATE_ESXI_POOL
-  GATE_ESXI_NETWORK GATE_CIDR GATE_GATEWAY GATE_ADDRS GATE_NTP
+  GATE_ESXI_NETWORK GATE_NTP
 )
 
 # Every setting whose value gate_redact replaces (the required ones, the
@@ -19,10 +23,6 @@ gate_redact_vars=(
   "${gate_required_vars[@]}" GATE_SNEAKERS_SECRET GATE_ESXI_USERNAME GATE_ESXI_PASSWORD
 )
 
-# The gate uses three addresses: the Root, the Intermediate and the fresh
-# install.
-gate_addrs_needed=3
-
 gate_log() { printf '[gate] %s\n' "$*" >&2; }
 gate_die() { gate_log "ERROR: $*"; exit 1; }
 
@@ -30,11 +30,12 @@ gate_die() { gate_log "ERROR: $*"; exit 1; }
 
 # gate_redact copies stdin to stdout line by line, replacing the value of
 # every setting in gate_redact_vars with [NAME], the host inside
-# GATE_ESXI_URL with [GATE_ESXI_HOST], each address in GATE_ADDRS with
-# [GATE_ADDR_<n>], and any other IPv4 address with [ipv4]. Values reach perl
-# through its environment, never its arguments, so they never show in a
-# process listing. Longer values are replaced first, so a value that contains
-# another (the pool path holding the host name) is replaced whole.
+# GATE_ESXI_URL with [GATE_ESXI_HOST], and any IPv4 address (a node's DHCP
+# address included; there is no reserved pool to name individually) with
+# [ipv4]. Values reach perl through its environment, never its arguments, so
+# they never show in a process listing. Longer values are replaced first, so
+# a value that contains another (the pool path holding the host name) is
+# replaced whole.
 gate_redact() {
   perl -e '
     use strict; use warnings;
@@ -48,10 +49,6 @@ gate_redact() {
     @ARGV = ();
     if (defined $ENV{GATE_ESXI_URL} && $ENV{GATE_ESXI_URL} =~ m{^[a-z][a-z0-9+.-]*://(?:[^@/]*@)?(\[[^\]]+\]|[^/:]+)}i) {
       push @pairs, [$1, "[GATE_ESXI_HOST]"];
-    }
-    if (defined $ENV{GATE_ADDRS}) {
-      my $i = 0;
-      for my $a (split " ", $ENV{GATE_ADDRS}) { $i++; push @pairs, [$a, "[GATE_ADDR_$i]"]; }
     }
     @pairs = sort { length($b->[0]) <=> length($a->[0]) } @pairs;
     my @res;
@@ -71,24 +68,41 @@ gate_redact() {
   ' "${gate_redact_vars[@]}"
 }
 
-# gate_mask_github registers every lab value with the Actions log masker.
-# Belt and braces only: gate_redact already keeps the values out of the
-# output. It must run before gate_start_redaction, since a redacted
-# ::add-mask:: line would mask the placeholder instead of the value.
+# gate_raw_fd is the real stdout: 1 (plain stdout) until gate_start_redaction
+# saves the real one as fd 3 and switches stdout to the redaction pipe. A
+# value discovered after that point (a node's DHCP address) still needs to
+# reach Actions' log masker un-redacted, which gate_mask_now does by writing
+# straight to this fd instead of through the (by then active) pipe.
+gate_raw_fd=1
+
+# gate_mask_now registers one value with the Actions log masker, writing
+# straight to gate_raw_fd. Belt and braces only: gate_redact already keeps
+# the value out of the output. Writing through the active redaction pipe
+# instead would mask the placeholder rather than the value, so this bypasses
+# it on purpose.
+gate_mask_now() {
+  [ "${GITHUB_ACTIONS:-}" = true ] || return 0
+  printf '::add-mask::%s\n' "$1" >&"$gate_raw_fd"
+}
+
+# gate_mask_github registers every lab value known up front with the Actions
+# log masker, before gate_start_redaction makes gate_raw_fd the only safe way
+# to do that.
 gate_mask_github() {
   [ "${GITHUB_ACTIONS:-}" = true ] || return 0
-  local n v a
+  local n v
   for n in "${gate_redact_vars[@]}"; do
     v="${!n:-}"
-    [ -n "$v" ] && printf '::add-mask::%s\n' "$v"
+    [ -n "$v" ] && gate_mask_now "$v"
   done
-  for a in ${GATE_ADDRS:-}; do printf '::add-mask::%s\n' "$a"; done
   return 0
 }
 
 # gate_start_redaction sends the rest of this shell's stdout and stderr
-# through gate_redact.
+# through gate_redact, after saving the real stdout as fd 3 for gate_mask_now.
 gate_start_redaction() {
+  exec 3>&1
+  gate_raw_fd=3
   exec > >(gate_redact) 2> >(gate_redact >&2)
 }
 
@@ -113,7 +127,7 @@ gate_load_env() {
     gate_log "missing settings: ${missing[*]} (set them in $file on the runner, or export them for a local run)"
     return 1
   fi
-  gate_check_addrs
+  return 0
 }
 
 gate_is_ipv4() {
@@ -124,34 +138,18 @@ gate_is_ipv4() {
   done
 }
 
-gate_check_addrs() {
-  local a n=0 prefix
-  for a in $GATE_ADDRS; do
-    gate_is_ipv4 "$a" || { gate_log "GATE_ADDRS: entry $((n + 1)) is not an IPv4 address"; return 1; }
-    n=$((n + 1))
-  done
-  [ "$n" -ge "$gate_addrs_needed" ] || { gate_log "GATE_ADDRS: the gate needs $gate_addrs_needed addresses, got $n"; return 1; }
-  gate_is_ipv4 "$GATE_GATEWAY" || { gate_log "GATE_GATEWAY is not an IPv4 address"; return 1; }
-  prefix="${GATE_CIDR#*/}"
-  if [ "$prefix" = "$GATE_CIDR" ] || ! [[ "$prefix" =~ ^[0-9]+$ ]] || [ "$prefix" -lt 8 ] || [ "$prefix" -gt 30 ] \
-      || ! gate_is_ipv4 "${GATE_CIDR%/*}"; then
-    gate_log "GATE_CIDR is not an IPv4 network in a.b.c.d/nn form (nn 8-30)"
-    return 1
-  fi
-  return 0
+# gate_gateway_for <addr>: a synthetic gateway for a DHCP-discovered address,
+# the first host address of the /24 gate_root_config/gate_int_config assume
+# around it. The gate's own nodes, each other and the runner all sit in the
+# same lab VLAN, which is never larger than a /24, so this is always on-link
+# for them; nothing the gate does ever routes off that VLAN, so the gateway
+# only has to be a valid address in the right prefix for the node to accept
+# it as its default route, never actually answer.
+gate_gateway_for() {
+  local a b c
+  IFS=. read -r a b c _ <<<"$1"
+  printf '%s.%s.%s.1\n' "$a" "$b" "$c"
 }
-
-# gate_addr <n> prints the n-th (1-based) address of GATE_ADDRS.
-gate_addr() {
-  local i=0 a
-  for a in $GATE_ADDRS; do
-    i=$((i + 1))
-    [ "$i" = "$1" ] && { printf '%s\n' "$a"; return 0; }
-  done
-  return 1
-}
-
-gate_prefix() { printf '%s\n' "${GATE_CIDR#*/}"; }
 
 # gate_fetch_account makes the ESXi account available to govc. The runner
 # wrapper fetches it from Sneakers (the secret GATE_SNEAKERS_SECRET names,
@@ -224,8 +222,7 @@ gate_ds_dir() { printf 'cryptos-gate-%s\n' "$GATE_RUN_ID"; }
 gate_vm_name() { printf 'cryptos-gate-%s-%s\n' "$GATE_RUN_ID" "$1"; }
 
 # gate_vm_mac <role-index> prints a fixed MAC in VMware's manually assigned
-# range (00:50:56:00:00:00-00:50:56:3f:ff:ff), unique per run and role, so a
-# maintenance node's DHCP address can be found by its MAC.
+# range (00:50:56:00:00:00-00:50:56:3f:ff:ff), unique per run and role.
 gate_vm_mac() {
   local h
   h="$(printf '%s-%s' "$GATE_RUN_ID" "$1" | sha256sum | cut -c1-6)"
@@ -283,50 +280,32 @@ gate_teardown() {
   return "$rc"
 }
 
-# ---- finding a maintenance node --------------------------------------------------
+# ---- finding a node's address --------------------------------------------------
 
-# gate_find_maint_addr <role> <role-index> prints the DHCP address a node
-# booted from the ISO took. The prod image shows it on the framebuffer only,
-# so it is found by the VM's MAC: GATE_DISCOVER_CMD (a runner-local command
-# that takes the MAC and prints the address) when set, else govc vm.ip
-# -esxcli (needs /Net/GuestIPHack on the host), else the runner's neighbour
-# table after a ping sweep of GATE_CIDR (needs the runner on that network).
-gate_find_maint_addr() {
-  local role="$1" mac addr deadline
-  mac="$(gate_vm_mac "$2")"
+# gate_discover_addr <role> prints the normal DHCP address this VM has, once
+# its HTTPS listener is up. The appliance's image carries no VMware Tools
+# guest agent to self-report one the plain way, so this reads it from the ESX
+# host's own ARP/DHCP snooping instead (govc vm.ip -esxcli, which needs
+# /Net/GuestIPHack enabled on the lab host). There is no reserved pool: this
+# is used both for the maintenance install and, since the node keeps whatever
+# address it is first handed, for the node once it is up too. Bounded by
+# GATE_DISCOVER_TIMEOUT (default 600s); the error names the VM, never an
+# address.
+gate_discover_addr() {
+  local role="$1" name addr deadline
+  name="$(gate_vm_name "$role")"
   deadline=$((SECONDS + ${GATE_DISCOVER_TIMEOUT:-600}))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    addr=""
-    if [ -n "${GATE_DISCOVER_CMD:-}" ]; then
-      addr="$(bash -c "$GATE_DISCOVER_CMD" _ "$mac" 2>/dev/null | head -n1 || true)"
-    else
-      addr="$(gate_govc vm.ip -esxcli -v4 -wait 10s "$(gate_vm_name "$role")" 2>/dev/null | head -n1 || true)"
-      if ! gate_is_ipv4 "$addr"; then
-        gate_ping_sweep
-        addr="$(ip neigh show 2>/dev/null | awk -v m="$mac" 'tolower($0) ~ m {print $1; exit}')"
-      fi
-    fi
+    addr="$(gate_govc vm.ip -esxcli -v4 -wait 10s "$name" 2>/dev/null | head -n1 || true)"
     if gate_is_ipv4 "$addr" && gate_tcp_up "$addr" 443; then
+      gate_mask_now "$addr"
       printf '%s\n' "$addr"
       return 0
     fi
-    sleep 5
+    sleep 2
   done
-  gate_log "$role: no maintenance address found for its MAC within ${GATE_DISCOVER_TIMEOUT:-600}s"
+  gate_log "$role: no address found for its VM within ${GATE_DISCOVER_TIMEOUT:-600}s"
   return 1
-}
-
-gate_ping_sweep() {
-  local base="${GATE_CIDR%/*}" prefix i n start a b c d
-  prefix="$(gate_prefix)"
-  [ "$prefix" -ge 22 ] || return 0
-  IFS=. read -r a b c d <<<"$base"
-  start=$(( (a << 24) | (b << 16) | (c << 8) | d ))
-  n=$(( 1 << (32 - prefix) ))
-  for ((i = 1; i < n - 1; i++)); do
-    local x=$((start + i))
-    printf '%d.%d.%d.%d\n' $(( (x >> 24) & 255 )) $(( (x >> 16) & 255 )) $(( (x >> 8) & 255 )) $(( x & 255 ))
-  done | xargs -P 64 -I{} ping -c1 -W1 {} >/dev/null 2>&1 || true
 }
 
 # ---- reaching a node ---------------------------------------------------------------
@@ -453,7 +432,7 @@ apiVersion: cryptos.dev/v1alpha1
 kind: MachineConfig
 metadata: {name: $name}
 role: {kind: root}
-network: {interface: eth0, address: $addr/$(gate_prefix), gateway: $GATE_GATEWAY, ntp_servers: [$GATE_NTP]}
+network: {interface: eth0, address: $addr/24, gateway: $(gate_gateway_for "$addr"), ntp_servers: [$GATE_NTP]}
 state_key: {mode: nodeid}
 bootstrap:
   admin_cert_pem: |
@@ -479,7 +458,7 @@ apiVersion: cryptos.dev/v1alpha1
 kind: MachineConfig
 metadata: {name: $name}
 role: {kind: intermediate}
-network: {interface: eth0, address: $addr/$(gate_prefix), gateway: $GATE_GATEWAY, ntp_servers: [$GATE_NTP]}
+network: {interface: eth0, address: $addr/24, gateway: $(gate_gateway_for "$addr"), ntp_servers: [$GATE_NTP]}
 state_key: {mode: nodeid}
 bootstrap:
   admin_cert_pem: |
@@ -507,22 +486,26 @@ EOF
 
 # ---- installing a node from an ISO -----------------------------------------------------
 
-# gate_install <role> <role-index> <iso name on the datastore> <config-file>:
-# create the VM, boot the ISO into maintenance, eject the CD so the next boot
-# is from disk, apply the config (the node installs and reboots onto its
-# static address), wait for it and pin its self-signed certificate.
+# gate_install <role> <role-index> <iso name on the datastore> <config-file>
+# <config-builder>: create the VM, boot the ISO into maintenance, find the
+# DHCP address it took, write its config with <config-builder> (called with
+# that address as $1, its output saved to <config-file> for later steps),
+# eject the CD so the next boot is from disk, apply the config (the node
+# installs and reboots, keeping the same address), wait for it and pin its
+# self-signed certificate.
 gate_install() {
-  local role="$1" idx="$2" iso="$3" cfg="$4" d maint
+  local role="$1" idx="$2" iso="$3" cfg="$4" build="$5" d addr
   d="$(gate_node_dir "$role")"
   mkdir -p "$d"
-  gate_addr "$idx" > "$d/addr"
   gate_vm_create "$role" "$idx" "$iso"
   gate_vm_power_on "$role"
-  maint="$(gate_find_maint_addr "$role" "$idx")"
+  addr="$(gate_discover_addr "$role")"
+  printf '%s\n' "$addr" > "$d/addr"
+  "$build" "$addr" > "$cfg"
   gate_log "$role: maintenance node answering; applying its config"
   gate_vm_eject "$role"
-  gate_ctl_insecure "$maint" config apply -f "$cfg"
-  gate_wait_tcp "$(cat "$d/addr")" 443
+  gate_ctl_insecure "$addr" config apply -f "$cfg"
+  gate_wait_tcp "$addr" 443
   gate_pin "$role"
   gate_wait_up "$role"
 }
