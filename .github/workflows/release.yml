@@ -1,0 +1,432 @@
+name: Release
+
+# One workflow proves a release: guard the pins, a hosted build of the
+# services, a reproducibility check, the ESXi gate, the unsigned assets, then
+# the tested section of the notes. See docs/release.md.
+#
+# Two ways in:
+#   - a v* tag push: the authoritative run, on the exact tag (assets and
+#     notes run only here, since there is no release yet on a rehearsal).
+#   - workflow_dispatch on main, by the owner only: the rehearsal. It proves
+#     a draft's pins before I publish it, which is what creates the tag.
+#
+# Trusted events only: never pull_request or pull_request_target. The gate
+# job also reaches the lab network, so it carries the full guard on top of
+# that (dispatch only by the owner).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: "Guard the pins"
+    # Gates the whole rehearsal to the owner; every other job needs this one
+    # (directly or through the chain below), so a dispatch by anyone else
+    # skips the entire run.
+    if: github.event_name != 'workflow_dispatch' || github.actor == 'Bugs5382'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install go-task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Guard the pins
+        run: task release:guard
+
+  services:
+    name: "Build and check the services"
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      IMAGE: manager:release-rehearsal
+      NET: fleet-release-rehearsal
+    steps:
+      - name: Checkout appliance
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: appliance
+
+      # The services job proves the pinned manager and web commits build and
+      # run together; it never pushes anything. cryptos-manager's own
+      # release workflow publishes the image and chart it ships.
+      - name: Resolve pinned commits
+        id: pins
+        run: |
+          set -euo pipefail
+          echo "manager=$(bash appliance/build/release/pin.sh cryptos-manager appliance/release/pins.yaml)" >> "$GITHUB_OUTPUT"
+          echo "web=$(bash appliance/build/release/pin.sh cryptos-web appliance/release/pins.yaml)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout manager (pinned)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: CryptOS-PKI/cryptos-manager
+          ref: ${{ steps.pins.outputs.manager }}
+          path: manager
+
+      - name: Checkout web (pinned)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: CryptOS-PKI/cryptos-web
+          ref: ${{ steps.pins.outputs.web }}
+          path: web
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Build context is the workspace root holding the sibling manager/ and
+      # web/ checkouts (manager/Dockerfile expects this layout).
+      - name: Build the manager image (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: manager/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}
+          build-args: |
+            VERSION=release-rehearsal
+            COMMIT=${{ steps.pins.outputs.manager }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image runs as nonroot with a health check
+        run: |
+          set -euo pipefail
+          user="$(docker image inspect -f '{{.Config.User}}' "$IMAGE")"
+          echo "user=$user"
+          [ "$user" = "65532:65532" ]
+          docker image inspect -f '{{json .Config.Healthcheck}}' "$IMAGE" | tee /dev/stderr | grep -q -- '-healthcheck'
+
+      - name: Start Postgres
+        run: |
+          set -euo pipefail
+          docker network create "$NET"
+          docker run -d --name pg --network "$NET" \
+            -e POSTGRES_DB=manager -e POSTGRES_USER=manager -e POSTGRES_PASSWORD=release \
+            postgres:18-alpine
+          for _ in $(seq 1 30); do
+            docker exec pg pg_isready -U manager -d manager && exit 0
+            sleep 2
+          done
+          exit 1
+
+      # No tlsCert/tlsKey or operator CA: the manager serves its self-signed
+      # bootstrap certificate, which is enough to exercise the TLS listener
+      # the health probe talks to.
+      - name: Run the manager image read-only
+        run: |
+          set -euo pipefail
+          cfg="$RUNNER_TEMP/fleet"
+          mkdir -p "$cfg"
+          cat > "$cfg/config.yaml" <<'EOF'
+          listen: "0.0.0.0:8443"
+          httpRedirectListen: ""
+          database_url: "postgres://manager:release@pg:5432/manager?sslmode=disable"
+          nodes: []
+          EOF
+          sudo chown -R 65532:65532 "$cfg"
+          docker run -d --name manager --network "$NET" \
+            --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --health-interval 2s --health-start-period 5s \
+            -p 8443:8443 \
+            -v "$cfg/config.yaml:/etc/cryptos/fleet/config.yaml:ro" \
+            -v node-creds:/var/lib/cryptos-manager/node-creds \
+            "$IMAGE"
+
+      - name: Becomes healthy
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            state="$(docker inspect -f '{{.State.Health.Status}}' manager)"
+            echo "health=$state"
+            [ "$state" = healthy ] && break
+            [ "$(docker inspect -f '{{.State.Running}}' manager)" = true ] || break
+            sleep 2
+          done
+          [ "$state" = healthy ]
+          curl -sSk https://127.0.0.1:8443/healthz | tee /dev/stderr | grep -q '"status":"ok"'
+
+      - name: Manager log
+        if: always()
+        run: docker logs manager || true
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web console
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Release bundle has no development-only code
+        working-directory: web
+        run: node scripts/check-release-bundle.mjs apps/console/dist
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Lint the FleetOS Manager chart
+        run: helm lint manager/chart/fleet-manager
+
+  reproducibility:
+    name: "Check the unsigned image builds reproducibly"
+    needs: services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install build toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc flex bison libelf-dev libssl-dev xz-utils \
+            squashfs-tools sbsigntool systemd-ukify systemd-boot-efi cpio \
+            python3-pefile xorriso mtools dosfstools
+
+      - name: Install go-task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Build twice and compare
+        run: task release:reproducible
+
+  gate:
+    name: "Run the ESXi release gate"
+    needs: reproducibility
+    # Every self-hosted job (it reaches the lab network) carries the full
+    # trusted-events guard on top of the dispatch-by-owner check guard
+    # already applies transitively through needs.
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.event_name != 'pull_request_target' &&
+      (github.event_name != 'workflow_dispatch' || github.actor == 'Bugs5382')
+    runs-on: ${{ fromJSON(vars.RUNNER_ESXI) }}
+    environment: lab-esxi
+    # Kernel build plus 13 steps of real VM installs, boots and power cuts on
+    # one physical host; well past the 15-30 minute guidance for a normal
+    # build or scan job.
+    timeout-minutes: 240
+    concurrency:
+      # Shared by the rehearsal and the release, never ref-scoped: one gate
+      # runs at a time regardless of which ref triggered it.
+      group: cryptos-lab-esxi-gate
+      cancel-in-progress: false
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Settings, the ESXi account and the image toolchain all come from the
+      # runner itself (docs/release-gate.md); nothing here is a GitHub
+      # secret, variable or literal.
+      - name: Run the gate
+        env:
+          GATE_SUMMARY_OUT: ${{ runner.temp }}/gate-summary.md
+        run: task gate:esxi
+
+      - name: Capture the step summary
+        id: summary
+        run: |
+          {
+            echo "summary<<GATE_SUMMARY_EOF"
+            cat "${{ runner.temp }}/gate-summary.md"
+            echo "GATE_SUMMARY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  assets:
+    name: "Build and attach the unsigned assets"
+    needs: gate
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write # attach the assets to the existing release
+    env:
+      ARCH: amd64
+      PLATFORM: vmware
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags so build/ci/buildinfo.sh and
+          # build/ci/artifact-name.sh can git describe the build.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install build toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc flex bison libelf-dev libssl-dev xz-utils \
+            squashfs-tools sbsigntool systemd-ukify systemd-boot-efi cpio \
+            python3-pefile xorriso mtools dosfstools
+
+      - name: Install go-task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Cache kernel build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/.work/kernel
+          key: kernel-${{ env.ARCH }}-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
+
+      - name: Refuse Secure Boot variables
+        run: |
+          set -euo pipefail
+          if env | grep -E '^SB_(KEY|CERT)=' >/dev/null; then
+            echo "SB_KEY/SB_CERT must not be set for release assets" >&2
+            exit 1
+          fi
+
+      # One kernel build (PLATFORM=vmware) serves both variants; each gets
+      # its own rootfs, UKI and ISO. The UKI is copied out under a variant
+      # name before the next build overwrites build/out/cryptos-<arch>.uki.unsigned.
+      - name: Build the unsigned images
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          build_tag="$(bash build/ci/artifact-name.sh)"
+          for statekey in tpm nodeid; do
+            suffix=""
+            [ "$statekey" = nodeid ] && suffix="-nodeid"
+            task iso:unsigned ARCH="$ARCH" PLATFORM="$PLATFORM" STATEKEY="$statekey"
+
+            # No upgrade anchor: the stamped anchor is a base64 X.509 DER
+            # string in /init.
+            init="build/.work/rootfs-${ARCH}/init"
+            if grep -q -a -E 'MII[A-Za-z0-9+/]{400,}' "$init"; then
+              echo "release build of $statekey carries an upgrade anchor" >&2
+              exit 1
+            fi
+            # No Authenticode signature on the UKI.
+            uki="build/out/cryptos-${ARCH}.uki.unsigned"
+            if sbverify --list "$uki" 2>&1 | grep -q 'signature 1'; then
+              echo "release UKI of $statekey carries a signature" >&2
+              exit 1
+            fi
+
+            cp "$uki" "dist/cryptos-${ARCH}-${PLATFORM}${suffix}-${build_tag}.uki.unsigned"
+            cp "build/out/cryptos-${ARCH}-${PLATFORM}${suffix}-unsigned-${build_tag}.iso" dist/
+          done
+
+      # cryptosctl for operator workstations, stamped with the same build
+      # identity as the image and the same build-number tag as the image
+      # artifacts.
+      - name: Cross-build cryptosctl
+        run: |
+          set -euo pipefail
+          ldflags="-s -w $(bash build/ci/buildinfo.sh)"
+          build_tag="$(bash build/ci/artifact-name.sh)"
+          for os in linux darwin; do
+            for cpu in amd64 arm64; do
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$cpu" go build -trimpath \
+                -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}-${build_tag}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
+            done
+          done
+
+      - name: Write the build record
+        run: |
+          set -euo pipefail
+          build/ci/build-manifest.sh dist/* > dist/build-manifest.json
+          cat dist/build-manifest.json
+
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      # The project signs nothing. This fails the run if any UKI, on its own
+      # or inside an ISO, carries an Authenticode signature, if a signature,
+      # certificate or attestation file is present, or if SHA256SUMS does not
+      # cover every file. The test proves the check catches a signed image.
+      - name: Check nothing is signed
+        run: |
+          set -euo pipefail
+          bash build/release/check-unsigned_test.sh
+          bash build/release/check-unsigned.sh dist
+
+      # Publishing the draft is what creates the tag, so the release already
+      # exists; this only uploads files to it and never creates, publishes or
+      # edits the release itself.
+      - name: Attach the assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "no release for $TAG: publish the draft (which creates the tag) before assets can be attached" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" dist/* --clobber
+
+  notes:
+    name: "Add how this release was tested"
+    needs: [gate, assets]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # edit the release body; never a tag or a file
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Write the gate summary
+        env:
+          GATE_SUMMARY: ${{ needs.gate.outputs.summary }}
+        run: printf '%s\n' "$GATE_SUMMARY" > "${{ runner.temp }}/gate-summary.md"
+
+      - name: Render and publish the tested section
+        env:
+          NOTES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTES_TAG: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json body -q .body \
+            | bash build/release/notes.sh "${{ runner.temp }}/gate-summary.md" \
+            | gh release edit "$TAG" --notes-file -
