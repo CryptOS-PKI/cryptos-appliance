@@ -95,10 +95,11 @@ rm -rf "$fifo_dir"
 # gate_mask_now: registers a run-time-discovered value with Actions' log
 # masker. Outside Actions it is silent; GATE_RAW_FD defaults to stdout (1)
 # until gate_start_redaction saves the real one, so this is directly
-# observable here without a redirection running.
+# observable here without a redirection running. This test's own GITHUB_ACTIONS
+# is explicit either way, since it is already true when this runs in Actions.
 out="$(GITHUB_ACTIONS=true bash -c "source '$here/lib.sh'; gate_mask_now '198.51.100.55'")"
 assert_eq "gate_mask_now registers the value in Actions" "::add-mask::198.51.100.55" "$out"
-out="$(bash -c "source '$here/lib.sh'; gate_mask_now '198.51.100.55'")"
+out="$(env -u GITHUB_ACTIONS bash -c "source '$here/lib.sh'; gate_mask_now '198.51.100.55'")"
 assert_eq "gate_mask_now is silent outside Actions" "" "$out"
 
 if [ "$fail" -ne 0 ]; then

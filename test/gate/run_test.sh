@@ -152,14 +152,20 @@ assert_contains "the re-key runs rotate-key, the Root's sign-subordinate, submit
   "intermediate,rotate-key,root,sign-subordinate,intermediate,submit-rotation" "$rekey_calls"
 
 # Redaction: no lab value in the output or the summary. Under GitHub Actions
-# the gate first prints one ::add-mask:: workflow command per value; the
-# runner consumes those lines and never shows them, so they are the only place
-# a raw value may appear, and they must come before any other output.
+# the gate prints one ::add-mask:: workflow command per setting known up
+# front, before anything else; the runner consumes those lines and never
+# shows them, so they are the only place a raw value may appear. A node's
+# address is masked the moment it is discovered, interleaved with the rest of
+# the run's output rather than up front, since it isn't known until then.
 out_shown="$(printf '%s\n' "$out" | grep -v '^::add-mask::' || true)"
 if [ "${GITHUB_ACTIONS:-}" = true ]; then
   first_other="$(printf '%s\n' "$out" | grep -n -v '^::add-mask::' | head -1 | cut -d: -f1)"
-  last_mask="$(printf '%s\n' "$out" | grep -n '^::add-mask::' | tail -1 | cut -d: -f1)"
-  assert_status "add-mask lines come before any other output" 0 "$([ -z "$last_mask" ] || [ -z "$first_other" ] || [ "$last_mask" -lt "$first_other" ]; echo $?)"
+  first_mask="$(printf '%s\n' "$out" | grep -n '^::add-mask::' | head -1 | cut -d: -f1)"
+  assert_status "the settings known up front are masked before anything else" 0 \
+    "$([ -z "$first_mask" ] || [ -z "$first_other" ] || [ "$first_mask" -lt "$first_other" ]; echo $?)"
+  for a in 198.51.100.11 198.51.100.12 198.51.100.13; do
+    assert_contains "a discovered address is masked the moment it is learned" "::add-mask::$a" "$out"
+  done
 fi
 for v in esx-lab.example.org gate-nfs-example "Gate Net Example" "$GATE_ESXI_POOL" 198.51.100. \
   gate-svc example-Passw0rd-xyz example-gate-account ntp.example.org "$GATE_ESXI_THUMBPRINT"; do
