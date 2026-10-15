@@ -34,6 +34,9 @@ assert_not_contains() {
 
 # shellcheck source=test/gate/lib.sh
 source "$here/lib.sh"
+# The fake runner routing table that gate_int_config reads for the node's
+# prefix and gateway since the real-gateway change (#55).
+export GATE_IP="$here/testdata/bin/ip"
 
 export GATE_NTP="ntp.example.org"
 gate_keys_init

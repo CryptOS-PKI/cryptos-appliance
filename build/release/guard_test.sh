@@ -67,7 +67,7 @@ mkbare() {
 node_sha="$(mkbare cryptos-node)"
 manager_sha="$(mkbare cryptos-manager)"
 web_sha="$(mkbare cryptos-web)"
-website_sha="$(mkbare website)"
+docs_sha="$(mkbare docs)"
 
 # A bare repo standing in for cryptos-appliance itself: the five release
 # repos the tag/dispatch checks cover are the four pinned repos plus the
@@ -106,7 +106,7 @@ remotes_env=(
   "GUARD_REMOTE_CRYPTOS_NODE=$work/remotes/cryptos-node.git"
   "GUARD_REMOTE_CRYPTOS_MANAGER=$work/remotes/cryptos-manager.git"
   "GUARD_REMOTE_CRYPTOS_WEB=$work/remotes/cryptos-web.git"
-  "GUARD_REMOTE_WEBSITE=$work/remotes/website.git"
+  "GUARD_REMOTE_DOCS=$work/remotes/docs.git"
   "GUARD_REMOTE_CRYPTOS_APPLIANCE=$work/remotes/cryptos-appliance.git"
 )
 
@@ -133,7 +133,7 @@ repos:
   cryptos-node:     {commit: $1}
   cryptos-manager:  {commit: $2}
   cryptos-web:      {commit: $3}
-  website:          {commit: $4}
+  docs:          {commit: $4}
 upgrade_from:
   - {repo: cryptos-node, commit: $5}
 EOF
@@ -156,14 +156,14 @@ run_guard_release() {
 
 # Case 1: a good pin set, everything reachable, go.mod matches.
 gomod="$(write_gomod "${node_sha:0:12}")"
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
 assert_status "good pin set" 0 "$status"
 assert_contains "good pin set message" "guard: OK" "$out"
 
-# Case 2: a missing pin (website absent from the repos block).
+# Case 2: a missing pin (docs absent from the repos block).
 pins="$work/pins-missing.yaml"
 cat > "$pins" <<EOF
 version: 1
@@ -179,10 +179,10 @@ out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
 assert_status "missing pin" 1 "$status"
-assert_contains "missing pin message" "missing pin: website" "$out"
+assert_contains "missing pin message" "missing pin: docs" "$out"
 
 # Case 3: a short SHA.
-pins="$(write_pins "${node_sha:0:12}" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "${node_sha:0:12}" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
@@ -195,11 +195,11 @@ out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
 assert_status "unreachable commit" 1 "$status"
-assert_contains "unreachable commit message" "unreachable commit for website" "$out"
+assert_contains "unreachable commit message" "unreachable commit for docs" "$out"
 
 # Case 5: cryptos-node pin disagrees with go.mod.
 other_gomod="$(write_gomod "${manager_sha:0:12}")"
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$other_gomod" 2>&1)" || status=$?
@@ -224,21 +224,21 @@ good_tag="v0.1.0-rc.1"
 tag_existing cryptos-node "$good_tag"
 tag_existing cryptos-manager "$good_tag"
 tag_existing cryptos-web "$good_tag"
-tag_existing website "$good_tag"
+tag_existing docs "$good_tag"
 tag_existing cryptos-appliance "$good_tag"
 
 rel_node="$work/rel-node.json"
 rel_manager="$work/rel-manager.json"
 rel_web="$work/rel-web.json"
-rel_website="$work/rel-website.json"
+rel_docs="$work/rel-docs.json"
 rel_appliance="$work/rel-appliance.json"
 releases_fixture "$rel_node" "$good_tag" false true main
 releases_fixture "$rel_manager" "$good_tag" false true main
 releases_fixture "$rel_web" "$good_tag" false true main
-releases_fixture "$rel_website" "$good_tag" false true main
+releases_fixture "$rel_docs" "$good_tag" false true main
 releases_fixture "$rel_appliance" "$good_tag" false true main
 
-release_pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$website_sha" "$node_sha")"
+release_pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
 
 # Case 7: a good tag release, every one of the five repos a published
 # prerelease at its pinned commit.
@@ -249,7 +249,7 @@ release_env_good=(
   "GUARD_RELEASES_CRYPTOS_NODE=$rel_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$rel_manager"
   "GUARD_RELEASES_CRYPTOS_WEB=$rel_web"
-  "GUARD_RELEASES_WEBSITE=$rel_website"
+  "GUARD_RELEASES_DOCS=$rel_docs"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$rel_appliance"
 )
 out=""
@@ -270,10 +270,10 @@ out="$(run_guard_release "$release_pins" "$gomod" "${release_env_badtag[@]}" 2>&
 assert_status "tag release: bad tag format" 1 "$status"
 assert_contains "tag release: bad tag format message" "is not vX.Y.Z or vX.Y.Z-rc.N" "$out"
 
-# Case 9: one repo (website) has no release at all, so no published
+# Case 9: one repo (docs) has no release at all, so no published
 # prerelease at its pinned commit.
-rel_website_none="$work/rel-website-none.json"
-no_releases_fixture "$rel_website_none"
+rel_docs_none="$work/rel-docs-none.json"
+no_releases_fixture "$rel_docs_none"
 release_env_missing=(
   GUARD_EVENT=tag
   "GUARD_TAG=$good_tag"
@@ -281,14 +281,14 @@ release_env_missing=(
   "GUARD_RELEASES_CRYPTOS_NODE=$rel_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$rel_manager"
   "GUARD_RELEASES_CRYPTOS_WEB=$rel_web"
-  "GUARD_RELEASES_WEBSITE=$rel_website_none"
+  "GUARD_RELEASES_DOCS=$rel_docs_none"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$rel_appliance"
 )
 out=""
 status=0
 out="$(run_guard_release "$release_pins" "$gomod" "${release_env_missing[@]}" 2>&1)" || status=$?
-assert_status "tag release: no release for website" 1 "$status"
-assert_contains "tag release: no release message" "no published prerelease for website" "$out"
+assert_status "tag release: no release for docs" 1 "$status"
+assert_contains "tag release: no release message" "no published prerelease for docs" "$out"
 
 # Case 10: cryptos-manager has a release at the right tag and commit, but
 # it's still a draft (not published), so it must not count.
@@ -301,7 +301,7 @@ release_env_draft=(
   "GUARD_RELEASES_CRYPTOS_NODE=$rel_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$rel_manager_draft"
   "GUARD_RELEASES_CRYPTOS_WEB=$rel_web"
-  "GUARD_RELEASES_WEBSITE=$rel_website"
+  "GUARD_RELEASES_DOCS=$rel_docs"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$rel_appliance"
 )
 out=""
@@ -315,12 +315,12 @@ assert_contains "tag release: draft message" "no published prerelease for crypto
 disp_node="$work/disp-node.json"
 disp_manager="$work/disp-manager.json"
 disp_web="$work/disp-web.json"
-disp_website="$work/disp-website.json"
+disp_docs="$work/disp-docs.json"
 disp_appliance="$work/disp-appliance.json"
 releases_fixture "$disp_node" "$good_tag" true true main
 releases_fixture "$disp_manager" "$good_tag" true true main
 releases_fixture "$disp_web" "$good_tag" true true main
-releases_fixture "$disp_website" "$good_tag" true true main
+releases_fixture "$disp_docs" "$good_tag" true true main
 releases_fixture "$disp_appliance" "$good_tag" true true main
 
 # Case 11: a good rehearsal, every one of the five repos' drafts matching
@@ -331,7 +331,7 @@ release_env_dispatch_good=(
   "GUARD_RELEASES_CRYPTOS_NODE=$disp_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$disp_manager"
   "GUARD_RELEASES_CRYPTOS_WEB=$disp_web"
-  "GUARD_RELEASES_WEBSITE=$disp_website"
+  "GUARD_RELEASES_DOCS=$disp_docs"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$disp_appliance"
 )
 out=""
@@ -341,23 +341,23 @@ assert_status "dispatch rehearsal: good drafts" 0 "$status"
 assert_contains "dispatch rehearsal: good drafts message" "guard: OK" "$out"
 assert_contains "dispatch rehearsal: prints the table" "rehearsal drafts vs pins" "$out"
 
-# Case 12: website's draft is tagged for a different version than the pins.
-disp_website_bad_tag="$work/disp-website-bad-tag.json"
-releases_fixture "$disp_website_bad_tag" "v0.1.0-rc.2" true true main
+# Case 12: docs's draft is tagged for a different version than the pins.
+disp_docs_bad_tag="$work/disp-docs-bad-tag.json"
+releases_fixture "$disp_docs_bad_tag" "v0.1.0-rc.2" true true main
 release_env_dispatch_tagmismatch=(
   GUARD_EVENT=dispatch
   "GUARD_SELF_COMMIT=$appliance_sha"
   "GUARD_RELEASES_CRYPTOS_NODE=$disp_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$disp_manager"
   "GUARD_RELEASES_CRYPTOS_WEB=$disp_web"
-  "GUARD_RELEASES_WEBSITE=$disp_website_bad_tag"
+  "GUARD_RELEASES_DOCS=$disp_docs_bad_tag"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$disp_appliance"
 )
 out=""
 status=0
 out="$(run_guard_release "$release_pins" "$gomod" "${release_env_dispatch_tagmismatch[@]}" 2>&1)" || status=$?
 assert_status "dispatch rehearsal: draft tag mismatch" 1 "$status"
-assert_contains "dispatch rehearsal: draft tag mismatch message" "draft for website is tagged v0.1.0-rc.2, not $good_tag" "$out"
+assert_contains "dispatch rehearsal: draft tag mismatch message" "draft for docs is tagged v0.1.0-rc.2, not $good_tag" "$out"
 
 # Case 13: cryptos-manager's draft targets a branch other than main.
 disp_manager_bad_target="$work/disp-manager-bad-target.json"
@@ -368,7 +368,7 @@ release_env_dispatch_targetmismatch=(
   "GUARD_RELEASES_CRYPTOS_NODE=$disp_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$disp_manager_bad_target"
   "GUARD_RELEASES_CRYPTOS_WEB=$disp_web"
-  "GUARD_RELEASES_WEBSITE=$disp_website"
+  "GUARD_RELEASES_DOCS=$disp_docs"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$disp_appliance"
 )
 out=""
@@ -386,7 +386,7 @@ release_env_dispatch_missing=(
   "GUARD_RELEASES_CRYPTOS_NODE=$disp_node"
   "GUARD_RELEASES_CRYPTOS_MANAGER=$disp_manager"
   "GUARD_RELEASES_CRYPTOS_WEB=$disp_web_none"
-  "GUARD_RELEASES_WEBSITE=$disp_website"
+  "GUARD_RELEASES_DOCS=$disp_docs"
   "GUARD_RELEASES_CRYPTOS_APPLIANCE=$disp_appliance"
 )
 out=""

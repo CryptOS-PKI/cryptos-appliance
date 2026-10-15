@@ -27,6 +27,7 @@ the lab host; it can also be run by hand from a Linux machine that reaches the l
 | 10 | The Intermediate re-keys (`ca rotate-key`, the Root's `ca sign-subordinate`, `ca submit-rotation`): the new certificate chains to the Root under a new key, a leaf issues under it, the revocation made before the re-key is still on the CRL and over OCSP, and the audit chain verifies | the subordinate re-key path, on every release |
 | 11 | Fresh install of the candidate (`nodeid`) as a Root, with its ceremony | a new install works |
 | 12 | Secure Boot on with K enrolled in `db` | manual for now: enrolling a VM's `db` is not automated, so step B's `sbverify --cert K` covers the signature |
+| 14 | `task e2e:esxi` (cryptos-manager) against the live Root and Intermediate, with step B's candidate served as the image under test | the manager's own write paths work against a real node, on every release |
 | 13 | Destroy the VMs, remove the run's datastore folder; the keys are shredded when the gate exits | nothing outlives the run |
 
 Every step after B runs only when the steps it needs passed; the rest are reported as skipped. The
@@ -35,6 +36,26 @@ gate prints this table at the end (and adds it to the job summary in Actions); t
 
 TPM mode (install, reseal on upgrade, rollback) is not on this host: a standalone ESXi host has no
 vTPM. The QEMU + swtpm suite (`task e2e:image`, `ci-e2e-image.yml`) proves it on the same commit.
+
+### Serving the candidate for step 14
+
+Once step B builds `candidate.uki`, `gate_serve_start` (`test/gate/run.sh`) serves it over plain
+HTTP from the runner's own address on the lab network (`gate_lab_addr`, never loopback, since the
+gate's VMs have to fetch it themselves), for the rest of the run; `gate_serve_stop` ends it from
+`gate_cleanup`, win or lose. Step 14 points cryptos-manager's `task e2e:esxi` at that URL through
+`E2E_IMAGE_URL`, at `candidate.uki.sig` through `E2E_IMAGE_SIGNATURE_PATH`, and at the candidate's
+already-recorded `candidate-sha` state through `E2E_IMAGE_SHA256`, so its image stage/activate/
+rollback write paths run on every routine gate pass instead of only when someone supplies an image
+by hand (cryptos-manager's `docs/e2e-esxi.md` keeps that by-hand path as the fallback). A run
+without a built candidate, or whose lab address can't be found, serves nothing and step 14 reports
+skip rather than failing the gate.
+
+Step 14 also needs a pinned `cryptos-manager` checkout (`GATE_MANAGER_DIR`, which the release
+workflow checks out from `release/pins.yaml` alongside the appliance itself) and `docker`, for
+`task e2e:esxi`'s own throwaway Postgres; either missing is also a skip, named. It targets the
+gate's live Root and Intermediate (the Intermediate first, since it is the one `test/e2e/esxi`
+drives issuance and SCEP against), with neither marked spare, so the manager's own rekey, escrow,
+enrolment and decommission steps report their own skip on a routine gate run.
 
 ### SCEP on the Intermediate
 
@@ -98,12 +119,12 @@ during maintenance and, since it keeps whatever address it is first handed, once
 The appliance's image carries no VMware Tools guest agent to self-report that address the plain
 way, so `gate_discover_addr` (`test/gate/lib.sh`) reads it from the ESX host's own ARP/DHCP
 snooping instead (`govc vm.ip -esxcli`, which needs the host's `/Net/GuestIPHack` setting enabled),
-confirmed once its HTTPS listener answers. The node's `MachineConfig` gets that same address with
-an assumed `/24` and a synthetic gateway at its first host address (`gate_gateway_for`): the gate's
-own nodes, each other and the runner all sit in one lab VLAN that is never larger than a `/24`, and
-nothing the gate does ever routes off it, so the gateway only has to be a valid address in the
-right prefix for the node to accept it as its default route, never actually answer. A VM that never
-gets an address fails the step, naming the VM, never an address.
+confirmed once its HTTPS listener answers. The node's `MachineConfig` gets the real prefix and
+gateway for that address, read from the runner's own routing table (`gate_network_for`,
+`test/gate/lib.sh`): the runner sits on the same lab network as the gate VMs, so the connected
+route that covers the VM's address gives the prefix, and the default route on that same interface
+gives the gateway. A VM whose address isn't on a network the runner is directly connected to, or
+whose network has no default route, fails the step, naming the VM, never an address.
 
 ## Lab values stay out of the logs
 
@@ -136,6 +157,8 @@ task gate:esxi
 | `GATE_FIRSTBOOT_CUT_AFTER=<s>` | seconds into the candidate's first boot before step 6's cut (default 3) |
 | `GATE_BOOT_TIMEOUT`, `GATE_DISCOVER_TIMEOUT` | seconds to wait for a node (900) and for a maintenance address (600) |
 | `GATE_DISK_GB` | the gate VMs' disk size (16) |
+| `GATE_MANAGER_DIR=<path>` | a cryptos-manager checkout, pinned to `release/pins.yaml`'s `cryptos-manager` commit, for step 14's `task e2e:esxi`; without it step 14 reports skip |
+| `GATE_SERVE_PORT`, `GATE_E2E_PG_PORT` | the candidate image server's port (8099) and step 14's throwaway Postgres port (15432) |
 
 Exit status: 0 when every step passed or was skipped, 1 when a step failed, 2 when a setting, the
 account or a tool is missing.
