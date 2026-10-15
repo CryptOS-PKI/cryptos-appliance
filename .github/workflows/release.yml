@@ -280,12 +280,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Step 14 (docs/release-gate.md) drives cryptos-manager's task e2e:esxi
+      # against the gate's own live nodes, pinned the same way the services
+      # job pins it.
+      - name: Resolve the pinned cryptos-manager commit
+        id: pins
+        run: echo "manager=$(bash build/release/pin.sh cryptos-manager release/pins.yaml)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout cryptos-manager (pinned)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: CryptOS-PKI/cryptos-manager
+          ref: ${{ steps.pins.outputs.manager }}
+          path: manager
+
       # Settings, the ESXi account and the image toolchain all come from the
       # runner itself (docs/release-gate.md); nothing here is a GitHub
       # secret, variable or literal.
       - name: Run the gate
         env:
           GATE_SUMMARY_OUT: ${{ runner.temp }}/gate-summary.md
+          GATE_MANAGER_DIR: ${{ github.workspace }}/manager
         run: task gate:esxi
 
       - name: Capture the step summary

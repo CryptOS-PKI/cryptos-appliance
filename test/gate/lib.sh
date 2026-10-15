@@ -266,6 +266,27 @@ gate_esxi_host() {
   printf '%s\n' "${u%%:*}"
 }
 
+# gate_lab_addr prints the runner's own address on the lab network: the src
+# address `ip route get` uses to reach the ESXi host, which docs/release-gate.md
+# ("Finding a node's address") already treats as being on the same lab
+# network as the gate's VMs. Used to bind the candidate image server
+# (gate_serve_start) to an address those VMs can actually reach, never
+# loopback or a runner address on some other interface.
+gate_lab_addr() {
+  local host="$1" ip line
+  if gate_is_ipv4 "$host"; then
+    ip="$host"
+  else
+    ip="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1; exit}')"
+    if [ -z "$ip" ]; then
+      gate_log "could not resolve $host to an IPv4 address"
+      return 1
+    fi
+  fi
+  line="$("${GATE_IP:-ip}" -4 route get "$ip" 2>/dev/null)" || { gate_log "no route to $host"; return 1; }
+  awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$line"
+}
+
 # Every file the gate writes goes under this folder on GATE_ESXI_DATASTORE.
 gate_ds_dir() { printf 'cryptos-gate-%s\n' "$GATE_RUN_ID"; }
 gate_vm_name() { printf 'cryptos-gate-%s-%s\n' "$GATE_RUN_ID" "$1"; }
