@@ -7,12 +7,15 @@ name: Release
 # Two ways in:
 #   - a v* tag push: the authoritative run, on the exact tag (assets and
 #     notes run only here, since there is no release yet on a rehearsal).
-#   - workflow_dispatch on main, by the owner only: the rehearsal. It proves
-#     a draft's pins before I publish it, which is what creates the tag.
+#   - workflow_dispatch on main, by the owner only: the full rehearsal (every
+#     job but assets, which only ever runs on a tag). It proves a draft's
+#     pins before I publish it, which is what creates the tag. `guard` also
+#     refuses a dispatch against any other ref, so a manual run can never
+#     reach assets by picking a tag ref from the dispatch UI.
 #
 # Trusted events only: never pull_request or pull_request_target. The gate
 # job also reaches the lab network, so it carries the full guard on top of
-# that (dispatch only by the owner).
+# that (dispatch only by the owner, on main).
 on:
   push:
     tags: ["v*"]
@@ -28,10 +31,14 @@ concurrency:
 jobs:
   guard:
     name: "Guard the pins"
-    # Gates the whole rehearsal to the owner; every other job needs this one
-    # (directly or through the chain below), so a dispatch by anyone else
-    # skips the entire run.
-    if: github.event_name != 'workflow_dispatch' || github.actor == 'Bugs5382'
+    # Gates the whole rehearsal to the owner, dispatched on main only; every
+    # other job needs this one (directly or through the chain below), so a
+    # dispatch by anyone else, or against any other ref, skips the entire
+    # run. Confining dispatch to main is what keeps `assets` (tag only) from
+    # ever running off a manual dispatch against a tag ref.
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      (github.actor == 'Bugs5382' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -218,9 +225,35 @@ jobs:
       - name: Build twice and compare
         run: task release:reproducible
 
+  # GitHub's org runner-group "selected workflows" restriction refuses a
+  # wildcard ref, so by default only release.yml@refs/heads/main is allowed
+  # on the self-hosted lab-esxi group; I add the exact tag
+  # (release.yml@refs/tags/<tag>) by hand before publishing each release
+  # (docs/release.md). A GITHUB_TOKEN cannot read an org's runner-group
+  # configuration (it needs an org-admin token), so this cannot be checked
+  # from a hosted job. This tiny job exists only so a missing entry is
+  # discovered on a cheap, 5-minute job instead of on the 240-minute `gate`
+  # job: if it never starts, add the tag's entry and re-run.
+  probe:
+    name: "Probe the lab runner"
+    needs: reproducibility
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.event_name != 'pull_request_target' &&
+      (github.event_name != 'workflow_dispatch' || github.actor == 'Bugs5382')
+    runs-on: ${{ fromJSON(vars.RUNNER_ESXI) }}
+    timeout-minutes: 5
+    steps:
+      - name: A lab runner accepted this ref
+        run: |
+          echo "a self-hosted runner in the lab-esxi group picked up ${{ github.ref }}."
+          echo "if this job never starts, that runner group's selected workflows list is"
+          echo "missing CryptOS-PKI/cryptos-appliance/.github/workflows/release.yml@${{ github.ref }}"
+          echo "-- add that entry (docs/release.md), then re-run this workflow."
+
   gate:
     name: "Run the ESXi release gate"
-    needs: reproducibility
+    needs: probe
     # Every self-hosted job (it reaches the lab network) carries the full
     # trusted-events guard on top of the dispatch-by-owner check guard
     # already applies transitively through needs.
