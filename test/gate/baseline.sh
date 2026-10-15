@@ -4,10 +4,12 @@
 # build recipe (the build moved to cryptos-appliance afterwards, so the
 # pinned commit is fetched and built in place rather than with this repo's
 # current Taskfile). Signed with a per-run throwaway Secure Boot key made in
-# /dev/shm (tmpfs), never written to disk elsewhere and never cached. The
-# built image is cached by its pin; the key never is.
+# /dev/shm (tmpfs), never written to disk elsewhere. The key is shredded
+# before this script returns, so the built image is never cached for reuse:
+# a cached image would trust a key that no longer exists. Every call rebuilds
+# and overwrites its output path.
 #
-# Prints the built (or cached) image's path on stdout.
+# Prints the built image's path on stdout.
 #
 # Usage: test/gate/baseline.sh [commit]
 #   BASELINE_REMOTE     override the cryptos-node remote (default:
@@ -15,7 +17,9 @@
 #   BASELINE_ARCH       default amd64
 #   BASELINE_PLATFORM   default vmware
 #   BASELINE_STATEKEY   default nodeid (the field's upgrade_from mode)
-#   BASELINE_CACHE_DIR  default <repo root>/.cache/gate/baseline
+#   BASELINE_CACHE_DIR  default <repo root>/.cache/gate/baseline; where the
+#                       standalone build's output ISO is written (rebuilt and
+#                       overwritten on every call, never read back)
 #   BASELINE_SB_KEY     with BASELINE_SB_CERT: sign and anchor the baseline
 #   BASELINE_SB_CERT    with the caller's key instead of a key of its own (the
 #                       gate signs the baseline and the candidate with one key,
@@ -42,7 +46,7 @@ cache_key() {
 }
 
 # Fail loudly if a file named like Secure Boot key material shows up anywhere
-# outside the tmpfs key directory, before it can reach the cache.
+# outside the tmpfs key directory, before it can reach the output path.
 check_no_stray_keys() {
   local search_dir="$1" found
   found="$(find "$search_dir" -type f \( -name 'sb.key' -o -name 'sb.crt' -o -name 'sb.der' \) 2>/dev/null || true)"
@@ -88,12 +92,6 @@ main() {
   mkdir -p "$cache_dir"
   local key; key="$(cache_key "$commit" "$arch" "$platform" "$statekey")"
   local artifact="$cache_dir/baseline-$key.iso"
-
-  if [ "$external" = 0 ] && [ -f "$artifact" ]; then
-    echo "baseline: cache hit for $key -> $artifact" >&2
-    printf '%s\n' "$artifact"
-    return 0
-  fi
 
   # Not `local`: an EXIT trap set from inside a function can fire after the
   # function's own locals have already gone out of scope (bash's local
@@ -168,7 +166,7 @@ main() {
   cp "$built" "$artifact"
   check_no_stray_keys "$cache_dir" || { rm -f "$artifact"; exit 1; }
 
-  echo "baseline: built and cached $key -> $artifact" >&2
+  echo "baseline: built $commit -> $artifact (not cached: standalone mode signs with its own throwaway key)" >&2
   printf '%s\n' "$artifact"
 }
 
