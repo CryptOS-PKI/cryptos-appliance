@@ -138,17 +138,66 @@ gate_is_ipv4() {
   done
 }
 
-# gate_gateway_for <addr>: a synthetic gateway for a DHCP-discovered address,
-# the first host address of the /24 gate_root_config/gate_int_config assume
-# around it. The gate's own nodes, each other and the runner all sit in the
-# same lab VLAN, which is never larger than a /24, so this is always on-link
-# for them; nothing the gate does ever routes off that VLAN, so the gateway
-# only has to be a valid address in the right prefix for the node to accept
-# it as its default route, never actually answer.
-gate_gateway_for() {
-  local a b c
-  IFS=. read -r a b c _ <<<"$1"
-  printf '%s.%s.%s.1\n' "$a" "$b" "$c"
+# gate_ip_to_int <a.b.c.d>: the address as a 32-bit integer.
+gate_ip_to_int() {
+  local a b c d
+  IFS=. read -r a b c d <<<"$1"
+  printf '%d\n' $(( (a << 24) + (b << 16) + (c << 8) + d ))
+}
+
+# gate_addr_in_cidr <addr> <cidr>: true when addr falls inside cidr (a.b.c.d/nn).
+gate_addr_in_cidr() {
+  local addr="$1" net="${2%/*}" prefix="${2#*/}" mask addr_i net_i
+  addr_i="$(gate_ip_to_int "$addr")"
+  net_i="$(gate_ip_to_int "$net")"
+  mask=$(( prefix == 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+  [ $(( addr_i & mask )) -eq $(( net_i & mask )) ]
+}
+
+# gate_network_for <addr> <vm>: prints "<prefix> <gateway>" for a DHCP
+# address, read from the runner's own routing table rather than assumed. The
+# gate's runner sits on the same lab network as the gate VMs, so the
+# connected (on-link, no "via") IPv4 route covering addr gives the real
+# prefix, and the default route on that same interface gives the real
+# gateway; this is accurate on any network, not only a /24. Fails, naming vm
+# and never an address, when addr is not on a network the runner is directly
+# connected to, or that network has no default route.
+gate_network_for() {
+  local addr="$1" vm="$2" routes line cidr iface="" prefix="" gw=""
+  routes="$("${GATE_IP:-ip}" -4 -o route show 2>/dev/null)" || routes=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      default\ *) continue ;; # the default route itself is never "connected"
+      *\ via\ *) continue ;; # has a gateway, so it is not on-link
+    esac
+    cidr="${line%% *}"
+    case "$cidr" in */*) ;; *) continue ;; esac
+    if gate_addr_in_cidr "$addr" "$cidr"; then
+      prefix="${cidr#*/}"
+      iface="$(awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$line")"
+      break
+    fi
+  done <<<"$routes"
+  if [ -z "$prefix" ]; then
+    gate_log "$vm: its address is not on a network this runner is directly connected to"
+    return 1
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      default\ via\ *)
+        if [ "$(awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$line")" = "$iface" ]; then
+          gw="$(awk '{for (i=1;i<=NF;i++) if ($i=="via") {print $(i+1); exit}}' <<<"$line")"
+          break
+        fi
+        ;;
+    esac
+  done <<<"$routes"
+  if [ -z "$gw" ]; then
+    gate_log "$vm: this runner's $iface network has no default route"
+    return 1
+  fi
+  printf '%s %s\n' "$prefix" "$gw"
 }
 
 # gate_fetch_account makes the ESXi account available to govc. The runner
@@ -426,13 +475,14 @@ gate_new_admin() {
 gate_indent() { sed "s/^/$1/" "$2"; }
 
 gate_root_config() {
-  local name="$1" addr="$2" cn="$3"
+  local name="$1" addr="$2" cn="$3" prefix gateway
+  read -r prefix gateway < <(gate_network_for "$addr" "$name") || return 1
   cat <<EOF
 apiVersion: cryptos.dev/v1alpha1
 kind: MachineConfig
 metadata: {name: $name}
 role: {kind: root}
-network: {interface: eth0, address: $addr/24, gateway: $(gate_gateway_for "$addr"), ntp_servers: [$GATE_NTP]}
+network: {interface: eth0, address: $addr/$prefix, gateway: $gateway, ntp_servers: [$GATE_NTP]}
 state_key: {mode: nodeid}
 bootstrap:
   admin_cert_pem: |
@@ -452,13 +502,14 @@ EOF
 }
 
 gate_int_config() {
-  local name="$1" addr="$2" cn="$3" root_pem="$4"
+  local name="$1" addr="$2" cn="$3" root_pem="$4" prefix gateway
+  read -r prefix gateway < <(gate_network_for "$addr" "$name") || return 1
   cat <<EOF
 apiVersion: cryptos.dev/v1alpha1
 kind: MachineConfig
 metadata: {name: $name}
 role: {kind: intermediate}
-network: {interface: eth0, address: $addr/24, gateway: $(gate_gateway_for "$addr"), ntp_servers: [$GATE_NTP]}
+network: {interface: eth0, address: $addr/$prefix, gateway: $gateway, ntp_servers: [$GATE_NTP]}
 state_key: {mode: nodeid}
 bootstrap:
   admin_cert_pem: |
