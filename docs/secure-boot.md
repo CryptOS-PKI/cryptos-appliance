@@ -1,18 +1,20 @@
 # Secure Boot: build and sign with your own key
 
-CryptOS does not ship a signing key, and it does not ask you to trust one. You
-generate your own Secure Boot key, build the image with it, and enroll its
-certificate on the machines you run. The same certificate becomes the node's
-upgrade anchor, so the key that makes an image bootable is also the only key
-that can replace it later.
+Every image you run is signed by you. CryptOS does not ship a signing key,
+and it does not ask you to trust one. You generate your own Secure Boot key,
+build the image with it (or sign a downloaded unsigned image with it), and
+enroll its certificate on the machines you run. The same certificate becomes
+the node's upgrade anchor, so the key that makes an image bootable is also
+the only key that can replace it later.
 
 > [!IMPORTANT]
-> **Releases are source only: there is no prebuilt image.** Nothing the project
-> ships is signed by, carries, or trusts a key the project generated, and
-> nothing is published for you to download — a `v*` tag only proves the
-> unsigned image and `cryptosctl` build. Build it yourself with your own key
-> by following this guide. See
-> [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets).
+> **The project never signs an image.** No release carries a key the project
+> generated. The release attaches an unsigned image (see
+> [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets)):
+> it boots only with Secure Boot off and has no upgrade anchor, so a node
+> installed from it can never be upgraded in place. To run CryptOS for real,
+> sign the downloaded image with your own key, or build it yourself with your
+> own key, by following this guide.
 
 ## What the key is used for
 
@@ -407,16 +409,21 @@ task iso:unsigned PLATFORM=vmware STATEKEY=nodeid
 | `cryptos-amd64.uki.unsigned` | the UKI, no Authenticode signature, no anchor |
 | `cryptos-amd64-vmware-nodeid-unsigned-<build>.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
-This is the recipe behind the release assets, and it is only a recipe: releases
-are source only, so nobody publishes the result. On a `v*` tag, CI runs
+This is how the public release assets are built. On a `v*` tag, CI runs
 `task iso:unsigned` for `STATEKEY=tpm` and `STATEKEY=nodeid` with no Secure
-Boot variables set, builds the UKIs (renamed
-`cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned`), the ISOs, and
-`cryptosctl` for linux and darwin on amd64 and arm64 (each also named with
-`<build>`) to prove they build — nothing is uploaded or attached to a release.
-Run the same commands yourself to get the files. The per-run key the CI smoke
-build uses on `main` signs and anchors only images that are thrown away with
-the run; none of them is uploaded either.
+Boot variables set, and attaches the UKIs (renamed
+`cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned`), the ISOs, `cryptosctl`
+for linux and darwin on amd64 and arm64 (each also named with `<build>`), a
+`build-manifest.json` build record (the full and short commit, dirty state,
+version and build tag), and a `SHA256SUMS` -- never a project-signed image or
+any attestation. The per-run key the CI smoke build uses on `main` signs and
+anchors only images that are thrown away with the run; none of them is
+uploaded.
+
+Verify what you downloaded before using it: check it against `SHA256SUMS`
+(`sha256sum -c SHA256SUMS`), or, since the build is meant to be bit-for-bit
+reproducible, rebuild from the same tag with the steps above and compare the
+hash yourself.
 
 Check that a build carries no anchor with the grep from step 5 against your own
 certificate, or, without one, by looking for any base64 X.509 certificate in
