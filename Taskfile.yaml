@@ -132,6 +132,7 @@ tasks:
       - bash build/release/reproducible_test.sh
       - bash build/iso/build_test.sh
       - bash test/gate/baseline_test.sh
+      - bash test/gate/network_test.sh
       - bash test/gate/redact_test.sh
       - bash test/gate/run_test.sh
       - bash test/gate/serve_test.sh

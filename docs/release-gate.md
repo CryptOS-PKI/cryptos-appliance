@@ -106,12 +106,12 @@ during maintenance and, since it keeps whatever address it is first handed, once
 The appliance's image carries no VMware Tools guest agent to self-report that address the plain
 way, so `gate_discover_addr` (`test/gate/lib.sh`) reads it from the ESX host's own ARP/DHCP
 snooping instead (`govc vm.ip -esxcli`, which needs the host's `/Net/GuestIPHack` setting enabled),
-confirmed once its HTTPS listener answers. The node's `MachineConfig` gets that same address with
-an assumed `/24` and a synthetic gateway at its first host address (`gate_gateway_for`): the gate's
-own nodes, each other and the runner all sit in one lab VLAN that is never larger than a `/24`, and
-nothing the gate does ever routes off it, so the gateway only has to be a valid address in the
-right prefix for the node to accept it as its default route, never actually answer. A VM that never
-gets an address fails the step, naming the VM, never an address.
+confirmed once its HTTPS listener answers. The node's `MachineConfig` gets the real prefix and
+gateway for that address, read from the runner's own routing table (`gate_network_for`,
+`test/gate/lib.sh`): the runner sits on the same lab network as the gate VMs, so the connected
+route that covers the VM's address gives the prefix, and the default route on that same interface
+gives the gateway. A VM whose address isn't on a network the runner is directly connected to, or
+whose network has no default route, fails the step, naming the VM, never an address.
 
 ## Lab values stay out of the logs
 
