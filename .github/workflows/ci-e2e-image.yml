@@ -41,7 +41,9 @@ name: Full-image suite (QEMU Root and Intermediate)
 # with `cryptosctl image sign` and a throwaway key, checks both copies of the
 # UKI inside with xorriso, mtools and sbverify, installs a node from the
 # first ISO over the maintenance API and upgrades it to the second image
-# (test/image/build-iso.sh, test/image/run-iso.sh). It also runs beside the
+# (test/image/build-iso.sh, test/image/run-iso.sh). It then boots the ISO
+# again on a tap link with no DHCP server and reaches the maintenance API on
+# the link-local address the node gives itself. It also runs beside the
 # others.
 #
 # release.yml also calls this workflow (workflow_call) on every release
@@ -435,7 +437,7 @@ jobs:
       - name: Build two unsigned ISOs and sign them with cryptosctl image sign
         run: bash test/image/build-iso.sh
 
-      - name: Check the signed ISO, install from it, upgrade
+      - name: Check the signed ISO, install from it, upgrade, reach it with no DHCP
         env:
           E2E_OUT: ${{ runner.temp }}/e2e-iso
         run: bash test/image/run-iso.sh
