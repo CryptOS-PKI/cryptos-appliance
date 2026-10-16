@@ -33,8 +33,10 @@ to the partition's LUKS header, so the new image can unlock it; see
 - A maintenance window for step 3, and only step 3.
 
 The node accepts an image only if its detached signature verifies against the
-anchor certificate compiled into the image it is running, which is the
-`SB_CERT` that image was built with. An image signed by any other key is
+anchor certificate of the image it is running: the one added when that image
+was signed (`/upgrade-anchor.der` in its `.initrd`, see
+[the sign-time anchor](secure-boot.md#the-sign-time-anchor)) or, failing that,
+the one compiled in from the `SB_CERT` it was built with. An image signed by any other key is
 refused, including a CI build signed with that workflow's per-run ephemeral
 key.
 

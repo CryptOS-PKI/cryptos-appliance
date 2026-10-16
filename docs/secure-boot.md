@@ -33,6 +33,27 @@ The anchor is compiled into the init binary as
 disk, so an administrator cannot swap it at runtime. See
 [`image-upgrade.md`](image-upgrade.md) for the upgrade path it protects.
 
+### The sign-time anchor
+
+An image can also get its anchor when it is signed, after the build. The
+signing step appends a small uncompressed cpio archive to the UKI's `.initrd`
+section holding one file, `/upgrade-anchor.der`: the signing certificate in
+DER. The `.initrd` is covered by the Authenticode signature and measured into
+PCR 11, so the anchor can't be changed without breaking both. The kernel
+unpacks the archives in order and a later file replaces an earlier one with
+the same path, so signing again with another key appends another archive and
+the last one wins.
+
+At boot, `cryptos-switchroot` (the initramfs `/init`) reads
+`/upgrade-anchor.der` before it switches into the SquashFS root, because the
+initramfs is gone once the real init runs. It passes the certificate to the
+real init in the `CRYPTOS_UPGRADE_ANCHOR` environment variable, as standard
+base64 of the DER. It always drops any `CRYPTOS_UPGRADE_ANCHOR` it inherited
+first: the kernel turns `key=value` words on the command line into init's
+environment, and the command line is not trusted. With no file, the variable
+is not set. Init prefers the sign-time anchor over one compiled in at build
+time, because the signing step is the last word on whose image it is.
+
 ## 1. Generate your signing key and certificate
 
 Do this on the machine that will hold the key, ideally an offline or
