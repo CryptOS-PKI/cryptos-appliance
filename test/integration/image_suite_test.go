@@ -288,6 +288,13 @@ type admin struct{ cert, key string }
 
 func (s *suite) newVM(t *testing.T, name, uuid, mgmtPort string, forwards []string, machineYAML string, a admin) *vm {
 	t.Helper()
+	return s.newVMFrom(t, s.env.uki, name, uuid, mgmtPort, forwards, machineYAML, a)
+}
+
+// newVMFrom is newVM with the UKI to install named, for a VM that boots a
+// different image from the suite's.
+func (s *suite) newVMFrom(t *testing.T, uki, name, uuid, mgmtPort string, forwards []string, machineYAML string, a admin) *vm {
+	t.Helper()
 	dir := filepath.Join(s.env.out, "vm-"+name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("vm dir: %v", err)
@@ -302,7 +309,7 @@ func (s *suite) newVM(t *testing.T, name, uuid, mgmtPort string, forwards []stri
 	if out, err := exec.Command("mmd", "-i", off, "::/EFI/BOOT").CombinedOutput(); err != nil {
 		t.Fatalf("mmd EFI/BOOT: %v\n%s", err, out)
 	}
-	if out, err := exec.Command("mcopy", "-i", off, s.env.uki, "::/EFI/BOOT/BOOTX64.EFI").CombinedOutput(); err != nil {
+	if out, err := exec.Command("mcopy", "-i", off, uki, "::/EFI/BOOT/BOOTX64.EFI").CombinedOutput(); err != nil {
 		t.Fatalf("mcopy the UKI onto the ESP: %v\n%s", err, out)
 	}
 	v.cover = filepath.Join(dir, "cover.img")

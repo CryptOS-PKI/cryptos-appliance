@@ -69,7 +69,10 @@ Secure Boot off, runs the ceremony, issues two leaves and revokes one, then stag
 with the bridge-era `cryptosctl` and activates it. The candidate has to answer on
 `cryptos.node.v1` with the same CA serial and key, list both leaves, show the revocation on the CRL
 and over OCSP, keep the config, pass `audit verify` and issue a new leaf. It then rolls back to the
-bridge, which has to answer again, and upgrades a second time. Nothing in a release is run on
+bridge, which has to answer again, and upgrades a second time. The same job proves the sign-time
+anchor: it builds the candidate unsigned with no anchor, signs it with `cryptosctl image sign` and a
+second throwaway key, checks it with `sbverify --cert`, boots it, refuses an image signed by the
+other key, and stages, activates and boots a second image signed the same way. Nothing in a release is run on
 VMware or other hardware: power cuts mid-upgrade and the FleetOS Manager's end-to-end run against
 live nodes are not proven per release.
 

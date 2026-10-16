@@ -41,9 +41,11 @@ refused, including a CI build signed with that workflow's per-run ephemeral
 key.
 
 An unsigned release asset, or any image built from the unsigned recipe
-(`docs/secure-boot.md`), carries no anchor. A node installed from one serves
-the upgrade RPCs as `Unimplemented`, and moving it onto your own key is a
-reinstall.
+(`docs/secure-boot.md`), carries no anchor until you sign it with
+`cryptosctl image sign`, which adds your certificate as the sign-time anchor
+(see [Sign a downloaded unsigned image](secure-boot.md#sign-a-downloaded-unsigned-image)).
+A node installed from an image with no anchor at all serves the upgrade RPCs as
+`Unimplemented`, and moving it onto your own key is a reinstall.
 
 ## The procedure
 
@@ -197,9 +199,9 @@ poor trade against PKCS#1 v1.5 over a SHA-256 digest.
   image it is already running is an outage with nothing to show for it.
 - **A build without an anchor serves none of this.** An image built without
   `SB_CERT` set during `rootfs:build` (a development build, or a public
-  release asset) has no anchor compiled in, and the image upgrade RPCs return
-  `Unimplemented` ("image upgrade is not available on this server"). Such a
-  node is upgraded by reinstalling it.
+  release asset) and never signed with `cryptosctl image sign` has no anchor,
+  and the image upgrade RPCs return `Unimplemented` ("image upgrade is not
+  available on this server"). Such a node is upgraded by reinstalling it.
 - **The anchor cannot change without the key.** The next image is checked
   against the anchor of the running one. Lose the key and the only way to a
   new anchor is a re-provision. See the key custody section of

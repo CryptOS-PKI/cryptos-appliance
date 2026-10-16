@@ -11,6 +11,13 @@
 #   cryptosctl-bridge                 cryptosctl from a77ae5b (cryptos.v1)
 #   cryptosctl                        cryptosctl from the cryptos-node module
 #                                     go.mod pins (cryptos.node.v1)
+#   signed.uki, signed-next.uki       the candidate built unsigned and with no
+#     (each with .sig and .unsigned)  build-time anchor, then signed with
+#                                     `cryptosctl image sign` and a second
+#                                     throwaway key, as an operator signs a
+#                                     downloaded release asset; signed-next
+#                                     reports a different version
+#   signed-cert.pem                   that second key's certificate (public)
 #   versions.env                      the version string each image reports
 #
 # Both images are the normal build, with no coverage instrumentation:
@@ -55,10 +62,11 @@ started=$SECONDS
 
 # Not local to a function: the EXIT trap reads them.
 keydir="$(mktemp -d /dev/shm/cryptos-bridge-key.XXXXXX)"
+signkeydir="$(mktemp -d /dev/shm/cryptos-bridge-signkey.XXXXXX)"
 src="$(mktemp -d)"
 cleanup() {
-  shred -u "$keydir"/sb.* 2>/dev/null || true
-  rm -rf "$keydir" "$src"
+  shred -u "$keydir"/sb.* "$signkeydir"/sb.* 2>/dev/null || true
+  rm -rf "$keydir" "$signkeydir" "$src"
 }
 trap cleanup EXIT
 
@@ -127,9 +135,33 @@ log "cryptosctl of each era"
 CGO_ENABLED=0 go build -trimpath -ldflags "$(bash build/ci/buildinfo.sh)" \
   -o "$dest/cryptosctl" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
 
+log "sign-time anchor: unsigned candidates signed with cryptosctl image sign"
+go run ./cmd/cryptos-sbkey --out-dir "$signkeydir" --cn "CryptOS sign-time anchor test (throwaway)" --days 2 >/dev/null
+for name in signed signed-next; do
+  ver="$candidate_version-$name"
+  # The release-asset shape: no SB_CERT, so no anchor is compiled into /init.
+  CRYPTOS_VERSION="$ver" SB_CERT='' STATEKEY=nodeid bash build/squashfs/build.sh "$arch"
+  if grep -q -a -E 'MII[A-Za-z0-9+/]{400,}' "$root/build/.work/rootfs-$arch/init"; then
+    log "the unsigned $name build carries a build-time anchor"
+    exit 1
+  fi
+  CRYPTOS_VERSION="$ver" bash build/uki/assemble.sh "$arch" qemu-dev
+  cp "$out/cryptos-$arch.uki.unsigned" "$dest/$name.uki.unsigned"
+  # The how-to in docs/secure-boot.md, step for step: sign with the default
+  # output name, then check the detached signature with openssl. The
+  # Authenticode check (sbverify) is a step of its own in the test.
+  "$dest/cryptosctl" image sign --image "$dest/$name.uki.unsigned" \
+    --key "$signkeydir/sb.key" --cert "$signkeydir/sb.crt"
+  openssl x509 -in "$signkeydir/sb.crt" -pubkey -noout >"$dest/signed.pub"
+  openssl dgst -sha256 -verify "$dest/signed.pub" -signature "$dest/$name.uki.sig" "$dest/$name.uki"
+done
+cp "$signkeydir/sb.crt" "$dest/signed-cert.pem"
+
 cat >"$dest/versions.env" <<EOF
 E2E_BRIDGE_VERSION=$bridge_version
 E2E_CANDIDATE_VERSION=$candidate_version
+E2E_SIGNED_VERSION=$candidate_version-signed
+E2E_SIGNED_NEXT_VERSION=$candidate_version-signed-next
 EOF
 
 check_no_stray_keys "$src" "$out" "$root/build/.work"

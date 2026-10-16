@@ -27,6 +27,8 @@ limitations under the License.
 // test/image/build-bridge.sh builds both images, signed and anchored with one
 // per-run throwaway key, and the cryptosctl of each era; test/image/run-bridge.sh
 // sets the variables below. Without CRYPTOS_E2E_BRIDGE=1 the test skips.
+//
+// The same test then proves the sign-time anchor (signed_anchor_test.go).
 
 import (
 	"bytes"
@@ -57,6 +59,7 @@ type bridgeEnv struct {
 	candidate, bridgeCtl    string
 	bridgeVer, candidateVer string
 	hostIP                  string
+	signed                  signedEnv
 }
 
 func loadBridgeEnv(t *testing.T) bridgeEnv {
@@ -81,12 +84,21 @@ func loadBridgeEnv(t *testing.T) bridgeEnv {
 		bridgeVer:    get("E2E_BRIDGE_VERSION"),
 		candidateVer: get("E2E_CANDIDATE_VERSION"),
 		hostIP:       get("E2E_BRIDGE_HOST_IP"),
+		signed: signedEnv{
+			uki:     get("E2E_SIGNED_UKI"),
+			nextUKI: get("E2E_SIGNED_NEXT_UKI"),
+			cert:    get("E2E_SIGNED_CERT"),
+			ver:     get("E2E_SIGNED_VERSION"),
+			nextVer: get("E2E_SIGNED_NEXT_VERSION"),
+		},
 	}
 	for k, v := range map[string]string{
 		"OVMF_CODE": e.suite.ovmfCode, "OVMF_VARS": e.suite.ovmfVars, "E2E_BRIDGE_UKI": e.suite.uki,
 		"E2E_IMAGE_OUT": e.suite.out, "CRYPTOSCTL": e.suite.cryptosctl,
 		"E2E_BRIDGE_CANDIDATE_UKI": e.candidate, "E2E_BRIDGE_CRYPTOSCTL": e.bridgeCtl,
 		"E2E_BRIDGE_VERSION": e.bridgeVer, "E2E_CANDIDATE_VERSION": e.candidateVer, "E2E_BRIDGE_HOST_IP": e.hostIP,
+		"E2E_SIGNED_UKI": e.signed.uki, "E2E_SIGNED_NEXT_UKI": e.signed.nextUKI, "E2E_SIGNED_CERT": e.signed.cert,
+		"E2E_SIGNED_VERSION": e.signed.ver, "E2E_SIGNED_NEXT_VERSION": e.signed.nextVer,
 	} {
 		if v == "" {
 			t.Fatalf("bridge upgrade test: %s must be set (run it through test/image/run-bridge.sh)", k)
@@ -141,7 +153,7 @@ type bridgeState struct {
 
 func TestBridgeUpgrade(t *testing.T) {
 	be := loadBridgeEnv(t)
-	s := &suite{t: t, env: be.suite, passed: map[string]bool{}, title: "Bridge upgrade (cryptos-node a77ae5b to the candidate)"}
+	s := &suite{t: t, env: be.suite, passed: map[string]bool{}, title: "Bridge upgrade (cryptos-node a77ae5b to the candidate) and the sign-time anchor"}
 	t.Cleanup(s.writeSummary)
 	st := &bridgeState{env: be}
 
@@ -172,6 +184,21 @@ func TestBridgeUpgrade(t *testing.T) {
 
 	if st.node != nil {
 		st.node.stop()
+	}
+
+	// The sign-time anchor (cryptos-appliance#41): an unsigned candidate,
+	// signed afterwards with cryptosctl image sign, takes a signed upgrade.
+	ss := &signedState{env: be.signed, admin: a, adminPEM: string(certPEM)}
+	const (
+		verify   = "sign-time anchor: cryptosctl image sign output passes sbverify --cert and its .sig verifies"
+		signBoot = "sign-time anchor: a node booted from the signed image serves image upgrades"
+		signUp   = "sign-time anchor: another key is refused, a second image signed the same way stages, activates and boots"
+	)
+	s.step(verify, nil, func(t *testing.T) { signedStepVerify(t, ss) })
+	s.step(signBoot, []string{verify}, func(t *testing.T) { signedStepBoot(t, s, ss) })
+	s.step(signUp, []string{signBoot}, func(t *testing.T) { signedStepUpgrade(t, ss, be.candidate) })
+	if ss.node != nil {
+		ss.node.stop()
 	}
 }
 

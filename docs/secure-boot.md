@@ -12,9 +12,9 @@ the only key that can replace it later.
 > images: no Authenticode signature, no upgrade anchor, and no signature or
 > attestation of any kind. Nothing the project ships is signed by, carries, or
 > trusts a key the project generated. Sign the unsigned image with your own key
-> to boot it with Secure Boot on, or build and sign from source by following
-> this guide, which is the only way to get a node you can upgrade in place. See
-> [Unsigned builds and the release assets](#unsigned-builds-and-the-release-assets).
+> and `cryptosctl image sign`, which also adds your certificate as the node's
+> upgrade anchor, or build and sign from source by following this guide. See
+> [Sign a downloaded unsigned image](#sign-a-downloaded-unsigned-image).
 
 ## What the key is used for
 
@@ -28,6 +28,10 @@ and certificate for all three:
 | Detached signature, `cryptos-<arch>.uki.sig` | `openssl dgst -sha256 -sign` in `build/uki/sign.sh` | the running node, at `cryptosctl image stage` |
 | Upgrade anchor stamped into `/init` | `build/squashfs/build.sh`, when `SB_CERT` is set | the node, when it verifies the next image's `.sig` |
 
+`cryptosctl image sign` does all three to a UKI that is already built, with
+the anchor added at sign time instead of compiled in (see
+[the sign-time anchor](#the-sign-time-anchor)).
+
 The anchor is compiled into the init binary as
 `internal/release.CertificateDER`. It is never read from configuration or
 disk, so an administrator cannot swap it at runtime. See
@@ -36,7 +40,7 @@ disk, so an administrator cannot swap it at runtime. See
 ### The sign-time anchor
 
 An image can also get its anchor when it is signed, after the build. The
-signing step appends a small uncompressed cpio archive to the UKI's `.initrd`
+signing step (`cryptosctl image sign`) appends a small uncompressed cpio archive to the UKI's `.initrd`
 section holding one file, `/upgrade-anchor.der`: the signing certificate in
 DER. The `.initrd` is covered by the Authenticode signature and measured into
 PCR 11, so the anchor can't be changed without breaking both. The kernel
@@ -469,11 +473,64 @@ grep -q -a -E 'MII[A-Za-z0-9+/]{400,}' build/.work/rootfs-amd64/init \
 sbverify --list build/out/cryptos-amd64.uki.unsigned   # "No signature table present"
 ```
 
+### Sign a downloaded unsigned image
+
+`cryptosctl image sign` signs an unsigned UKI with your key: it adds your
+certificate as the [sign-time anchor](#the-sign-time-anchor), signs the result
+for Secure Boot (Authenticode, the same result `sbsign` gives) and writes the
+detached `.sig` that `cryptosctl image stage` checks. It needs no root, no
+rebuild and no other tools, so it runs on Linux and macOS. A node running the
+signed image takes in-place upgrades signed by the same key.
+
 > [!IMPORTANT]
-> Signing an unsigned UKI afterwards (`task uki:sign` with your key) makes it
-> bootable with Secure Boot on, but it still has no anchor: the anchor is compiled
-> into `/init` during `rootfs:build`, before the UKI exists. For a node you want
-> to upgrade in place, build from source with `SB_CERT` set as in step 4.
+> Use `cryptosctl image sign`, not `task uki:sign`, for a downloaded image.
+> `uki:sign` makes the UKI bootable with Secure Boot on, but adds no anchor, so
+> a node running it serves the upgrade calls as `Unimplemented`.
+
+**Before you start**
+
+- `cryptosctl` from the same release, and the release's unsigned UKI for your
+  state-key mode, checked against `SHA256SUMS` as above.
+- Your RSA key and certificate from [step 1](#1-generate-your-signing-key-and-certificate)
+  (`sb.key` and `sb.crt`). The key must not be encrypted.
+
+1. Sign the UKI. With no `--out`, the output is the input name without
+   `.unsigned`:
+
+   ```bash
+   cryptosctl image sign \
+     --image cryptos-amd64-vmware-nodeid-<build>.uki.unsigned \
+     --key sb.key --cert sb.crt
+   ```
+
+   > Expected output: `cryptos-amd64-vmware-nodeid-<build>.uki` and
+   > `cryptos-amd64-vmware-nodeid-<build>.uki.sig` next to the input. Nothing is
+   > written unless the tool's own check of the result passes.
+
+2. Check the Secure Boot signature:
+
+   ```bash
+   sbverify --cert sb.crt cryptos-amd64-vmware-nodeid-<build>.uki
+   ```
+
+   > Expected output: `Signature verification OK`.
+
+3. Check the detached signature the node will check:
+
+   ```bash
+   openssl x509 -in sb.crt -pubkey -noout > sb.pub
+   openssl dgst -sha256 -verify sb.pub \
+     -signature cryptos-amd64-vmware-nodeid-<build>.uki.sig \
+     cryptos-amd64-vmware-nodeid-<build>.uki
+   ```
+
+   > Expected output: `Verified OK`.
+
+Signing an image again with another key appends a second anchor, and the last
+one wins. The full-image suite's bridge job runs these steps on every image
+pull request and release: it signs an unsigned candidate with a throwaway key,
+checks it with `sbverify --cert`, boots it, and stages a second image signed
+the same way.
 
 ## Key custody
 
