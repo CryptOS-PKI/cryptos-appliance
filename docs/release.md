@@ -48,7 +48,10 @@ guard -> services -> reproducibility -> e2e -> assets -> notes
 | `notes` | hosted, tag only | adds "How this release was tested" to the release body: "Proven on CI (QEMU suite); no ESXi gate.", the commit set, the suite's step table and a link to the run |
 
 `guard` runs on both entry points. On a rehearsal dispatch it only proves the pins are internally
-consistent, since the other repos' tags do not exist yet to check against.
+consistent, since the other repos' tags do not exist yet to check against. It also prints each
+repo's release-drafter draft next to its pin and fails on a wrong tag, target or prerelease flag.
+The workflow token can't list another repo's drafts, so a draft it can't see is a warning, and I
+check those drafts by hand before publishing.
 
 Every job runs on GitHub-hosted runners: there is no self-hosted runner, lab host or credential
 in the release path. The QEMU suite is the only proof that the image boots and works. It covers

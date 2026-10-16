@@ -373,7 +373,8 @@ out="$(run_guard_release "$release_pins" "$gomod" "${release_env_dispatch_target
 assert_status "dispatch rehearsal: draft target mismatch" 1 "$status"
 assert_contains "dispatch rehearsal: draft target mismatch message" "draft for cryptos-manager targets develop, not main" "$out"
 
-# Case 14: cryptos-web has no release-drafter draft at all.
+# Case 14: cryptos-web's draft isn't visible (the workflow token can't list
+# another repo's drafts): a warning, not a failure.
 disp_web_none="$work/disp-web-none.json"
 no_releases_fixture "$disp_web_none"
 release_env_dispatch_missing=(
@@ -388,8 +389,27 @@ release_env_dispatch_missing=(
 out=""
 status=0
 out="$(run_guard_release "$release_pins" "$gomod" "${release_env_dispatch_missing[@]}" 2>&1)" || status=$?
-assert_status "dispatch rehearsal: missing draft" 1 "$status"
-assert_contains "dispatch rehearsal: missing draft message" "no release-drafter draft for cryptos-web" "$out"
+assert_status "dispatch rehearsal: missing draft" 0 "$status"
+assert_contains "dispatch rehearsal: missing draft warning" "guard: warning: no release-drafter draft visible for cryptos-web" "$out"
+assert_contains "dispatch rehearsal: missing draft still OK" "guard: OK" "$out"
+
+# Case 15: Release Drafter reports the target as refs/heads/main.
+disp_web_ref="$work/disp-web-ref.json"
+releases_fixture "$disp_web_ref" "$good_tag" true true refs/heads/main
+release_env_dispatch_ref=(
+  GUARD_EVENT=dispatch
+  "GUARD_SELF_COMMIT=$appliance_sha"
+  "GUARD_RELEASES_CRYPTOS_NODE=$disp_node"
+  "GUARD_RELEASES_CRYPTOS_MANAGER=$disp_manager"
+  "GUARD_RELEASES_CRYPTOS_WEB=$disp_web_ref"
+  "GUARD_RELEASES_DOCS=$disp_docs"
+  "GUARD_RELEASES_CRYPTOS_APPLIANCE=$disp_appliance"
+)
+out=""
+status=0
+out="$(run_guard_release "$release_pins" "$gomod" "${release_env_dispatch_ref[@]}" 2>&1)" || status=$?
+assert_status "dispatch rehearsal: refs/heads/main target" 0 "$status"
+assert_contains "dispatch rehearsal: refs/heads/main target message" "guard: OK" "$out"
 
 if [ "$fail" -ne 0 ]; then
   echo "guard_test: FAILED" >&2

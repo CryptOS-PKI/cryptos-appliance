@@ -11,7 +11,9 @@
 # non-draft prerelease at its pinned commit. On a workflow_dispatch
 # rehearsal it instead prints each of those five repos' release-drafter
 # draft (name, tag, target, prerelease) next to its pin and fails on any
-# mismatch with pins.yaml's own `release:` version. Neither check runs
+# mismatch with pins.yaml's own `release:` version. The workflow token can't
+# list another repo's drafts (only users with push access see them), so a
+# draft it can't see is a warning to check by hand, not a failure. Neither check runs
 # outside those two events (a plain local `task release:guard` only checks
 # the pins, as before).
 #
@@ -42,6 +44,7 @@ required_repos=(cryptos-node cryptos-manager cryptos-web docs)
 
 declare -A repo_commit
 errors=()
+warnings=()
 
 fail() { errors+=("$1"); }
 
@@ -200,8 +203,9 @@ check_tag_releases() {
 }
 
 # check_dispatch_drafts: print each release repo's release-drafter draft
-# next to its pin, and fail when a draft is missing or disagrees with
-# pins.yaml's own release version, target branch or prerelease flag.
+# next to its pin, and fail when a draft disagrees with pins.yaml's own
+# release version, target branch or prerelease flag. A draft that isn't
+# visible is reported as a warning.
 check_dispatch_drafts() {
   local repo commit draft dtag dtarget dprerelease
   echo "guard: rehearsal drafts vs pins"
@@ -210,8 +214,8 @@ check_dispatch_drafts() {
     commit="${release_commit[$repo]:-}"
     draft="$(releases_json_for "$repo" | jq -c '[.[] | select(.draft == true)] | .[0] // empty')"
     if [ -z "$draft" ]; then
-      printf '%-18s  %-12s  %-20s  %-10s  %-10s\n' "$repo" "${commit:0:12}" "(none)" "-" "-"
-      fail "no release-drafter draft for $repo"
+      printf '%-18s  %-12s  %-20s  %-10s  %-10s\n' "$repo" "${commit:0:12}" "(not visible)" "-" "-"
+      warnings+=("no release-drafter draft visible for $repo; check it by hand")
       continue
     fi
     dtag="$(jq -r '.tag_name' <<<"$draft")"
@@ -221,7 +225,7 @@ check_dispatch_drafts() {
     if [ "$dtag" != "$release_name" ]; then
       fail "draft for $repo is tagged $dtag, not $release_name"
     fi
-    if [ "$dtarget" != "main" ]; then
+    if [ "$dtarget" != "main" ] && [ "$dtarget" != "refs/heads/main" ]; then
       fail "draft for $repo targets $dtarget, not main"
     fi
     if [ "$dprerelease" != "true" ]; then
@@ -249,6 +253,10 @@ if [ "$guard_event" = "tag" ]; then
 elif [ "$guard_event" = "dispatch" ]; then
   check_dispatch_drafts
 fi
+
+for w in "${warnings[@]}"; do
+  echo "guard: warning: $w" >&2
+done
 
 if [ "${#errors[@]}" -gt 0 ]; then
   echo "guard: FAILED" >&2
