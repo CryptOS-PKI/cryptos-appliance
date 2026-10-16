@@ -3,8 +3,8 @@
 # workflow steps that check out a pinned repo (the release workflow's
 # services job checks out cryptos-manager and cryptos-web at their pins).
 # Shares guard.sh's reader for pins.yaml's two-level shape, not a general
-# YAML parser; `upgrade_from` is a different section and is never returned
-# by a repo lookup.
+# YAML parser; any other top-level section is never returned by a repo
+# lookup.
 #
 # Usage: build/release/pin.sh <repo> [pins-file]
 set -euo pipefail
@@ -24,7 +24,6 @@ section=""
 while IFS= read -r line; do
   case "$line" in
     repos:*) section="repos"; continue ;;
-    upgrade_from:*) section=""; continue ;;
     [a-zA-Z]*:*) section="" ;;
   esac
 

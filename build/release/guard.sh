@@ -41,8 +41,6 @@ go_mod="${GUARD_GO_MOD:-$root/go.mod}"
 required_repos=(cryptos-node cryptos-manager cryptos-web docs)
 
 declare -A repo_commit
-upgrade_repo=()
-upgrade_commit=()
 errors=()
 
 fail() { errors+=("$1"); }
@@ -89,18 +87,12 @@ section=""
 while IFS= read -r line; do
   case "$line" in
     repos:*) section="repos"; continue ;;
-    upgrade_from:*) section="upgrade_from"; continue ;;
     [a-zA-Z]*:*) section="" ;;
   esac
 
   if [ "$section" = "repos" ]; then
     if [[ "$line" =~ ^[[:space:]]+([a-zA-Z0-9_-]+):[[:space:]]*\{commit:[[:space:]]*([^},[:space:]]*)[[:space:]]*\} ]]; then
       repo_commit["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
-    fi
-  elif [ "$section" = "upgrade_from" ]; then
-    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\{repo:[[:space:]]*([a-zA-Z0-9_-]+),[[:space:]]*commit:[[:space:]]*([^},[:space:]]*)[[:space:]]*\} ]]; then
-      upgrade_repo+=("${BASH_REMATCH[1]}")
-      upgrade_commit+=("${BASH_REMATCH[2]}")
     fi
   fi
 done < "$pins_file"
@@ -123,28 +115,6 @@ for repo in "${required_repos[@]}"; do
     fail "unreachable commit for $repo: $commit ($url)"
   fi
 done
-
-# --- upgrade_from: at least one entry, well-formed, reachable ---
-if [ "${#upgrade_repo[@]}" -eq 0 ]; then
-  fail "missing pin: upgrade_from"
-else
-  for i in "${!upgrade_repo[@]}"; do
-    repo="${upgrade_repo[$i]}"
-    commit="${upgrade_commit[$i]}"
-    if [ -z "$commit" ]; then
-      fail "missing pin: upgrade_from ($repo)"
-      continue
-    fi
-    if ! is_full_sha "$commit"; then
-      fail "pin for upgrade_from ($repo) is not a full 40-hex commit: $commit"
-      continue
-    fi
-    url="$(remote_url_for "$repo")"
-    if ! commit_reachable "$url" "$commit"; then
-      fail "unreachable commit for upgrade_from ($repo): $commit ($url)"
-    fi
-  done
-fi
 
 # --- cryptos-node pin must equal go.mod's pseudo-version commit ---
 node_commit="${repo_commit[cryptos-node]:-}"
