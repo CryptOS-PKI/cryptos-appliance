@@ -35,7 +35,7 @@ Two ways in, one pipeline:
 - **Release** — a `v*` tag push. The authoritative run, on the exact tag.
 
 ```text
-guard -> services -> reproducibility -> probe -> gate -> assets -> notes
+guard -> services -> reproducibility -> e2e -> assets -> notes
 ```
 
 | Job | Runs on | Does |
@@ -43,32 +43,20 @@ guard -> services -> reproducibility -> probe -> gate -> assets -> notes
 | `guard` | hosted | `task release:guard`: `release/pins.yaml` is well-formed, every pin is a full commit SHA, every pin is reachable, and the `cryptos-node` pin matches `go.mod` |
 | `services` | hosted | builds the FleetOS Manager image from the pinned `cryptos-manager` and `cryptos-web` commits and runs it read-only with its health check, builds the web console and runs its release-bundle check, and lints `chart/fleet-manager`; pushes nothing |
 | `reproducibility` | hosted | `task release:reproducible`: builds the unsigned image twice from the same commit in separate workspaces and compares every output byte for byte |
-| `probe` | the lab ESXi runner | a tiny, 5-minute check that a lab runner accepts this ref at all, before the 240-minute `gate` job does; see "The runner group" below |
-| `gate` | the lab ESXi runner | `task gate:esxi`: builds the baseline and the candidate with a throwaway key and proves on real hardware that the candidate installs, boots, upgrades in place with state kept (including power cuts mid-upgrade) and rolls back; see [the release gate](release-gate.md) |
-| `assets` | hosted, tag only | builds the unsigned ISOs and UKIs (`tpm` and `nodeid`) and `cryptosctl`, checks nothing is signed, and attaches them with `SHA256SUMS` and `build-manifest.json` to the tag's release |
-| `notes` | hosted, tag only | adds "How this release was tested" to the release body: the commit set, the gate's step table and a link to the run |
+| `e2e` | hosted | calls `ci-e2e-image.yml`, the QEMU full-image suite, on this commit: boots the real image (OVMF, with a software TPM) as a Root and an Intermediate and drives every step over the mTLS API; its step table is the release's proof |
+| `assets` | hosted, tag only | refuses to run if the suite skipped, then builds the unsigned ISOs and UKIs (`tpm` and `nodeid`) and `cryptosctl`, checks nothing is signed, and attaches them with `SHA256SUMS` and `build-manifest.json` to the tag's release |
+| `notes` | hosted, tag only | adds "How this release was tested" to the release body: "Proven on CI (QEMU suite); no ESXi gate.", the commit set, the suite's step table and a link to the run |
 
 `guard` runs on both entry points. On a rehearsal dispatch it only proves the pins are internally
 consistent, since the other repos' tags do not exist yet to check against.
 
-The `gate` job runs on the self-hosted ESXi runner through the `lab-esxi` environment, which holds
-no secrets: it only gates on a required reviewer. The runner fetches the gate's ESXi account from
-Sneakers at run time and exports it into the job; nothing about the lab (its address, datastore,
-network or account) is a GitHub secret, variable or literal in this repository. A `concurrency`
-group shared by the rehearsal and the release makes sure only one gate runs at a time. The gate's
-VMs take a normal DHCP address on the lab LAN; there is no reserved pool to maintain (see
-[the release gate](release-gate.md)).
-
-### The runner group
-
-`probe` and `gate` run on the self-hosted `lab-esxi` runner group. GitHub's org runner-group
-"selected workflows" access list refuses a wildcard ref, so by default it only allows
-`release.yml@refs/heads/main` (the rehearsal). **Before publishing a release draft, I add the exact
-tag to that list** (`release.yml@refs/tags/<tag>`, e.g. `refs/tags/v0.1.0-rc.1`), through the
-org's runner-group settings. A `GITHUB_TOKEN` cannot read or change org runner-group settings (it
-needs an org-admin token), so this cannot be checked or done from the workflow itself: if I forget,
-`probe` never starts, rather than the expensive `gate` job hanging for no runner. If that happens,
-I add the entry and re-run the workflow on the same tag.
+Every job runs on GitHub-hosted runners: there is no self-hosted runner, lab host or credential
+in the release path. The QEMU suite is the only proof that the image boots and works. It covers
+the ceremony, subordinate signing, issuance, revocation and OCSP, ACME, EST, the RFC 3161 TSA,
+re-certify, escrow and restore, image upgrade in place on a software-key node and on a TPM node,
+and the console reset. Nothing in a release is run on VMware or other hardware: power cuts
+mid-upgrade, an upgrade from an older release and the FleetOS Manager's end-to-end run against
+live nodes are not proven per release.
 
 ## Checking what you build
 
@@ -83,7 +71,7 @@ I add the entry and re-run the workflow on the same tag.
   any release file, because the project signs nothing (see
   [Secure Boot](secure-boot.md#unsigned-builds-and-the-release-assets)).
 
-## If the gate fails after I publish
+## If the release run fails after I publish
 
 The candidate failed, and the tag is already live.
 
@@ -94,5 +82,5 @@ The candidate failed, and the tag is already live.
 4. I set each ruleset back to active.
 5. Once the cause is fixed, the next candidate gets the next rc number — never the same tag name.
 
-A runner reset or a lab outage mid-run is an environment failure, not a code failure: I re-run the
-same workflow run on the same tag instead of cutting a new one.
+A hosted-runner hiccup mid-run (a timeout, a download that failed) is an environment failure, not
+a code failure: I re-run the same workflow run on the same tag instead of cutting a new one.

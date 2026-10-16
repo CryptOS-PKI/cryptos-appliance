@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unit test for notes.sh: renders the "How <tag> was tested" section from the
-# gate's step summary and release/pins.yaml, reads the release's current body
+# QEMU suite's step summary and release/pins.yaml, reads the release's current body
 # on stdin, and prints the updated body (replacing a prior run's section, if
 # any) on stdout. It never calls `gh`.
 # Usage: build/release/notes_test.sh
@@ -68,12 +68,12 @@ repos:
   cryptos-web:      {commit: f0d466dd8d430155b3c38f76439d061241f78554}
   cryptos-release:  {commit: 045d92a3a435c5ceb02199ccff289782108443d7}
   docs:             {commit: ecb0de8e71ddac0cb6e5b11b2519a9af3dc8eaa2}
-upgrade_from:
-  - {repo: cryptos-node, commit: a77ae5bf55737dec83188fe61fb615fd2fe839e1}
 EOF
 
 summary="$work/summary.md"
 cat > "$summary" <<'EOF'
+## Full-image suite
+
 | # | Step | Result |
 |---|---|---|
 | B | Build | ok |
@@ -87,7 +87,7 @@ run_notes() {
 }
 
 # Case 1: no previous section -- the existing body is kept and the new
-# section is appended once, with the commit set and the gate summary.
+# section is appended once, with the commit set and the suite summary.
 body1="Pre-1.0 warning.
 
 ## Changes
@@ -102,7 +102,10 @@ assert_contains "first run heading" "## How v0.1.0-rc.1 was tested" "$out"
 assert_contains "first run commit set" "cryptos-manager" "$out"
 assert_contains "first run commit set sha" "13c1b8ca02e1f09c234a6366f042c0a4a0e29467" "$out"
 assert_contains "first run appliance commit" "cryptos-appliance" "$out"
-assert_contains "first run gate summary" "| B | Build | ok |" "$out"
+assert_contains "first run proven on CI" "Proven on CI (QEMU suite); no ESXi gate." "$out"
+assert_contains "first run suite summary" "| B | Build | ok |" "$out"
+assert_contains "first run suite heading demoted" "#### Full-image suite" "$out"
+assert_count "first run suite heading once" "## Full-image suite" 1 "$out"
 assert_contains "first run link" "https://example.org/runs/123" "$out"
 assert_count "first run one heading" "## How v0.1.0-rc.1 was tested" 1 "$out"
 
@@ -130,13 +133,13 @@ status=0
 out="$(NOTES_TAG="v0.1.0-rc.1" bash "$script" "$summary" "$pins" <<<"$body1" 2>&1)" || status=$?
 assert_status "missing run url" 1 "$status"
 
-# Case 4: missing gate summary file.
+# Case 4: missing suite summary file.
 out=""
 status=0
 out="$(NOTES_RUN_URL="https://example.org/runs/123" NOTES_TAG="v0.1.0-rc.1" \
   bash "$script" "$work/no-such-summary.md" "$pins" <<<"$body1" 2>&1)" || status=$?
 assert_status "missing summary file" 1 "$status"
-assert_contains "missing summary file message" "no such gate summary file" "$out"
+assert_contains "missing summary file message" "no such suite summary file" "$out"
 
 if [ "$fail" -ne 0 ]; then
   echo "notes_test: FAILED" >&2

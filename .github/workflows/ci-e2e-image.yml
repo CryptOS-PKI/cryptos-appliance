@@ -19,6 +19,11 @@ name: Full-image suite (QEMU Root and Intermediate)
 # it, so a run whose inputs did not change reuses the last build instead of
 # rebuilding. The kernel build shares ci-image.yml's cache. No release or CI
 # image is ever built with -cover.
+#
+# release.yml also calls this workflow (workflow_call) on every release
+# rehearsal and tag, on the same commit: the suite is the release's proof
+# that the image boots and works, and its step table (the `summary` output)
+# becomes the "How <tag> was tested" section of the release notes.
 on:
   schedule:
     - cron: "37 6 * * *"
@@ -38,13 +43,22 @@ on:
       - "go.sum"
       - ".github/workflows/ci-e2e-image.yml"
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      summary:
+        description: "The suite's step table (Markdown), empty when the suite skipped"
+        value: ${{ jobs.suite.outputs.summary }}
 
 permissions:
   contents: read
 
+# Called from release.yml, github.workflow is the caller's name, so the group
+# carries its own suffix: sharing the caller's group would make this run wait
+# on the very run that called it. Only pull requests cancel an older run; a
+# release's suite is never cut short by a newer one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-e2e-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   image:
@@ -131,6 +145,8 @@ jobs:
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -185,6 +201,22 @@ jobs:
         env:
           E2E_OUT: ${{ runner.temp }}/e2e-image
         run: bash test/image/run.sh
+
+      # A skipped suite (a runner without KVM tools) writes no summary.md, so
+      # the output stays empty; release.yml refuses to attach assets then.
+      - name: Hand the step table to a caller
+        id: summary
+        env:
+          E2E_OUT: ${{ runner.temp }}/e2e-image
+        run: |
+          set -euo pipefail
+          [ -f "$E2E_OUT/summary.md" ] || exit 0
+          delim="E2E_SUMMARY_$(openssl rand -hex 8)"
+          {
+            echo "summary<<$delim"
+            cat "$E2E_OUT/summary.md"
+            echo "$delim"
+          } >>"$GITHUB_OUTPUT"
 
       - name: Keep the logs, serial consoles and coverage report
         if: always()
