@@ -1,8 +1,9 @@
 name: Release
 
-# One workflow proves a release: guard the pins, a hosted build of the
-# services, a reproducibility check, the ESXi gate, the unsigned assets, then
-# the tested section of the notes. See docs/release.md.
+# One workflow proves a release, on GitHub-hosted runners only: guard the
+# pins, a hosted build of the services, a reproducibility check, the QEMU
+# full-image suite, the unsigned assets, then the tested section of the
+# notes. There is no ESXi gate and no self-hosted runner. See docs/release.md.
 #
 # Two ways in:
 #   - a v* tag push: the authoritative run, on the exact tag (assets and
@@ -13,9 +14,7 @@ name: Release
 #     refuses a dispatch against any other ref, so a manual run can never
 #     reach assets by picking a tag ref from the dispatch UI.
 #
-# Trusted events only: never pull_request or pull_request_target. The gate
-# job also reaches the lab network, so it carries the full guard on top of
-# that (dispatch only by the owner, on main).
+# Trusted events only: never pull_request or pull_request_target.
 on:
   push:
     tags: ["v*"]
@@ -225,96 +224,17 @@ jobs:
       - name: Build twice and compare
         run: task release:reproducible
 
-  # GitHub's org runner-group "selected workflows" restriction refuses a
-  # wildcard ref, so by default only release.yml@refs/heads/main is allowed
-  # on the self-hosted lab-esxi group; I add the exact tag
-  # (release.yml@refs/tags/<tag>) by hand before publishing each release
-  # (docs/release.md). A GITHUB_TOKEN cannot read an org's runner-group
-  # configuration (it needs an org-admin token), so this cannot be checked
-  # from a hosted job. This tiny job exists only so a missing entry is
-  # discovered on a cheap, 5-minute job instead of on the 240-minute `gate`
-  # job: if it never starts, add the tag's entry and re-run.
-  probe:
-    name: "Probe the lab runner"
+  # The release's proof: the same QEMU full-image suite ci-e2e-image.yml runs
+  # nightly and on image pull requests, on this exact commit. Its step table
+  # is the tested section of the notes.
+  e2e:
+    name: "Boot the image in QEMU and run the full-image suite"
     needs: reproducibility
-    if: >-
-      github.event_name != 'pull_request' &&
-      github.event_name != 'pull_request_target' &&
-      (github.event_name != 'workflow_dispatch' || github.actor == 'Bugs5382')
-    runs-on: ${{ fromJSON(vars.RUNNER_ESXI) }}
-    timeout-minutes: 5
-    steps:
-      - name: A lab runner accepted this ref
-        run: |
-          echo "a self-hosted runner in the lab-esxi group picked up ${{ github.ref }}."
-          echo "if this job never starts, that runner group's selected workflows list is"
-          echo "missing CryptOS-PKI/cryptos-appliance/.github/workflows/release.yml@${{ github.ref }}"
-          echo "-- add that entry (docs/release.md), then re-run this workflow."
-
-  gate:
-    name: "Run the ESXi release gate"
-    needs: probe
-    # Every self-hosted job (it reaches the lab network) carries the full
-    # trusted-events guard on top of the dispatch-by-owner check guard
-    # already applies transitively through needs.
-    if: >-
-      github.event_name != 'pull_request' &&
-      github.event_name != 'pull_request_target' &&
-      (github.event_name != 'workflow_dispatch' || github.actor == 'Bugs5382')
-    runs-on: ${{ fromJSON(vars.RUNNER_ESXI) }}
-    environment: lab-esxi
-    # Kernel build plus 13 steps of real VM installs, boots and power cuts on
-    # one physical host; well past the 15-30 minute guidance for a normal
-    # build or scan job.
-    timeout-minutes: 240
-    concurrency:
-      # Shared by the rehearsal and the release, never ref-scoped: one gate
-      # runs at a time regardless of which ref triggered it.
-      group: cryptos-lab-esxi-gate
-      cancel-in-progress: false
-    outputs:
-      summary: ${{ steps.summary.outputs.summary }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      # Step 14 (docs/release-gate.md) drives cryptos-manager's task e2e:esxi
-      # against the gate's own live nodes, pinned the same way the services
-      # job pins it.
-      - name: Resolve the pinned cryptos-manager commit
-        id: pins
-        run: echo "manager=$(bash build/release/pin.sh cryptos-manager release/pins.yaml)" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout cryptos-manager (pinned)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: CryptOS-PKI/cryptos-manager
-          ref: ${{ steps.pins.outputs.manager }}
-          path: manager
-
-      # Settings, the ESXi account and the image toolchain all come from the
-      # runner itself (docs/release-gate.md); nothing here is a GitHub
-      # secret, variable or literal.
-      - name: Run the gate
-        env:
-          GATE_SUMMARY_OUT: ${{ runner.temp }}/gate-summary.md
-          GATE_MANAGER_DIR: ${{ github.workspace }}/manager
-        run: task gate:esxi
-
-      - name: Capture the step summary
-        id: summary
-        run: |
-          {
-            echo "summary<<GATE_SUMMARY_EOF"
-            cat "${{ runner.temp }}/gate-summary.md"
-            echo "GATE_SUMMARY_EOF"
-          } >> "$GITHUB_OUTPUT"
+    uses: ./.github/workflows/ci-e2e-image.yml
 
   assets:
     name: "Build and attach the unsigned assets"
-    needs: gate
+    needs: e2e
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -324,6 +244,17 @@ jobs:
       ARCH: amd64
       PLATFORM: vmware
     steps:
+      # A suite that skipped (no KVM tooling on the runner) still exits 0;
+      # it proved nothing, so nothing is attached.
+      - name: Refuse a skipped suite
+        env:
+          SUMMARY: ${{ needs.e2e.outputs.summary }}
+        run: |
+          if [ -z "$SUMMARY" ]; then
+            echo "the QEMU full-image suite wrote no step table (it skipped); refusing to attach assets" >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -450,7 +381,7 @@ jobs:
 
   notes:
     name: "Add how this release was tested"
-    needs: [gate, assets]
+    needs: [e2e, assets]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -464,10 +395,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Write the gate summary
+      - name: Write the suite summary
         env:
-          GATE_SUMMARY: ${{ needs.gate.outputs.summary }}
-        run: printf '%s\n' "$GATE_SUMMARY" > "${{ runner.temp }}/gate-summary.md"
+          SUITE_SUMMARY: ${{ needs.e2e.outputs.summary }}
+        run: printf '%s\n' "$SUITE_SUMMARY" > "${{ runner.temp }}/suite-summary.md"
 
       - name: Render and publish the tested section
         env:
@@ -476,5 +407,5 @@ jobs:
         run: |
           set -euo pipefail
           gh release view "$TAG" --json body -q .body \
-            | bash build/release/notes.sh "${{ runner.temp }}/gate-summary.md" \
+            | bash build/release/notes.sh "${{ runner.temp }}/suite-summary.md" \
             | gh release edit "$TAG" --notes-file -

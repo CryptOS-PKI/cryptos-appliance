@@ -134,8 +134,6 @@ repos:
   cryptos-manager:  {commit: $2}
   cryptos-web:      {commit: $3}
   docs:          {commit: $4}
-upgrade_from:
-  - {repo: cryptos-node, commit: $5}
 EOF
   printf '%s' "$file"
 }
@@ -156,7 +154,7 @@ run_guard_release() {
 
 # Case 1: a good pin set, everything reachable, go.mod matches.
 gomod="$(write_gomod "${node_sha:0:12}")"
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
@@ -172,8 +170,6 @@ repos:
   cryptos-node:     {commit: $node_sha}
   cryptos-manager:  {commit: $manager_sha}
   cryptos-web:      {commit: $web_sha}
-upgrade_from:
-  - {repo: cryptos-node, commit: $node_sha}
 EOF
 out=""
 status=0
@@ -182,7 +178,7 @@ assert_status "missing pin" 1 "$status"
 assert_contains "missing pin message" "missing pin: docs" "$out"
 
 # Case 3: a short SHA.
-pins="$(write_pins "${node_sha:0:12}" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
+pins="$(write_pins "${node_sha:0:12}" "$manager_sha" "$web_sha" "$docs_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
@@ -190,7 +186,7 @@ assert_status "short SHA" 1 "$status"
 assert_contains "short SHA message" "not a full 40-hex" "$out"
 
 # Case 4: an unreachable commit (well-formed, pushed nowhere).
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$unreachable_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$unreachable_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$gomod" 2>&1)" || status=$?
@@ -199,7 +195,7 @@ assert_contains "unreachable commit message" "unreachable commit for docs" "$out
 
 # Case 5: cryptos-node pin disagrees with go.mod.
 other_gomod="$(write_gomod "${manager_sha:0:12}")"
-pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
+pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha")"
 out=""
 status=0
 out="$(run_guard "$pins" "$other_gomod" 2>&1)" || status=$?
@@ -238,7 +234,7 @@ releases_fixture "$rel_web" "$good_tag" false true main
 releases_fixture "$rel_docs" "$good_tag" false true main
 releases_fixture "$rel_appliance" "$good_tag" false true main
 
-release_pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha" "$node_sha")"
+release_pins="$(write_pins "$node_sha" "$manager_sha" "$web_sha" "$docs_sha")"
 
 # Case 7: a good tag release, every one of the five repos a published
 # prerelease at its pinned commit.

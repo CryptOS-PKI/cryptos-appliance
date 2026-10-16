@@ -15,7 +15,7 @@ name: Image build (kernel, rootfs, UKI, release assets)
 #     all. They carry no signature and no upgrade anchor, and nothing signs
 #     or attests them; users sign with their own key (docs/secure-boot.md).
 #     Nothing here is attached to anything. On a real v* tag, release.yml's
-#     own assets job builds and attaches them, after the ESXi gate passes.
+#     own assets job builds and attaches them, after the QEMU full-image suite passes.
 #
 # Not triggered by pull_request: the kernel compile is expensive, so it runs
 # on push to main and manual dispatch. Use workflow_dispatch on a branch to
@@ -136,7 +136,7 @@ jobs:
   # The release assets: unsigned, no upgrade anchor, built with no Secure Boot
   # variables in the environment. Manual dispatch only, to rehearse the build
   # without attaching anything; release.yml builds and attaches them for real
-  # on a v* tag, after the ESXi gate passes.
+  # on a v* tag, after the QEMU full-image suite passes.
   release-assets:
     name: Build the unsigned release assets
     if: ${{ inputs.release_assets }}
@@ -263,4 +263,4 @@ jobs:
       # Deliberately no upload-artifact step: this is a dispatch-only rehearsal
       # of the build, and nothing it produces is attached anywhere. On a real
       # v* tag, release.yml's own assets job builds and attaches these files,
-      # after the ESXi gate passes.
+      # after the QEMU full-image suite passes.
