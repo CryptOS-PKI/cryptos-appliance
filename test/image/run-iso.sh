@@ -3,7 +3,10 @@
 # with tools of its own (xorriso, mtools, sbverify), boot it in QEMU (OVMF,
 # Secure Boot off) on a blank disk, install a nodeid Root from it over the
 # maintenance API, boot the installed disk, and upgrade that node in place to
-# a second image signed the same way (cryptos-appliance#83). The steps live
+# a second image signed the same way (cryptos-appliance#83). It also boots
+# the ISO on a host tap link with no DHCP server and reaches the maintenance
+# API on the link-local address the node gives itself (cryptos-node#381); that
+# needs sudo to make the tap device, and the step skips without it. The steps live
 # in test/integration/signed_iso_test.go (TestSignedISO); each reports pass,
 # fail or skip in a summary table. Entry point for `task e2e:iso` and the
 # ci-e2e-image workflow's iso job; test/image/build-iso.sh builds its inputs.
@@ -15,6 +18,8 @@
 # Environment:
 #   E2E_OUT   where logs and the step summary go (default a temp dir,
 #             printed at the end)
+#   E2E_ISO_TAP_NAME  the tap device made for the no-DHCP step (default
+#             cryptos-ll0); the host side gets 169.254.0.1/16
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,10 +64,27 @@ mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 log "accelerator: $accel, output: $out"
 
+# The no-DHCP step's link: a tap device QEMU can open as this user, with the
+# host on 169.254.0.1/16 and nothing serving DHCP on it. The node never picks
+# an address in 169.254.0.0/24, so the two can't clash.
+tap=""
+tap_name="${E2E_ISO_TAP_NAME:-cryptos-ll0}"
+if sudo -n true 2>/dev/null; then
+  sudo ip tuntap add dev "$tap_name" mode tap user "$(id -un)"
+  trap 'sudo ip link delete "$tap_name" 2>/dev/null || true' EXIT
+  sudo ip addr add 169.254.0.1/16 dev "$tap_name"
+  sudo ip link set "$tap_name" up
+  tap="$tap_name"
+  log "no-DHCP link: $tap (host 169.254.0.1/16)"
+else
+  log "WARNING: no passwordless sudo; the no-DHCP link-local step skips"
+fi
+
 set +e
 (
   cd "$root" &&
     CRYPTOS_E2E_ISO=1 \
+      E2E_ISO_TAP="$tap" \
       E2E_ISO="$dir/first/$signed.iso" \
       E2E_ISO_UKI="$dir/first/$signed.uki" \
       E2E_ISO_NEXT_UKI="$dir/next/$signed.uki" \

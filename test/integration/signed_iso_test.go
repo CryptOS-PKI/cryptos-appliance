@@ -28,6 +28,10 @@ limitations under the License.
 // node from it over the maintenance API the way an operator does, and
 // upgrades that node to a second image signed with the same key.
 //
+// It also boots the ISO on a link with no DHCP server and reaches the
+// maintenance API on the link-local address the node gives itself
+// (cryptos-node#381).
+//
 // test/image/build-iso.sh builds and signs both ISOs; test/image/run-iso.sh
 // sets the variables below. Without CRYPTOS_E2E_ISO=1 the test skips.
 
@@ -36,7 +40,10 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,12 +61,18 @@ const (
 	isoMaintAddr = "10.0.0.15"
 	// The VM's first virtio disk.
 	isoInstallDisk = "/dev/vda"
+	// isoLinkLocalMAC is the NIC address of the VM on the link with no DHCP
+	// server, so the link-local address the node derives from it is known.
+	isoLinkLocalMAC = "52:54:00:4c:4c:01"
 )
 
 type isoEnv struct {
 	suite                   suiteEnv
 	iso, uki, nextUKI, cert string
 	ver, nextVer            string
+	// tap is a host tap device on a link with no DHCP server, with a
+	// 169.254.0.0/16 address on the host side; empty skips that step.
+	tap string
 }
 
 func loadISOEnv(t *testing.T) isoEnv {
@@ -84,6 +97,7 @@ func loadISOEnv(t *testing.T) isoEnv {
 		cert:    get("E2E_ISO_CERT"),
 		ver:     get("E2E_ISO_VERSION"),
 		nextVer: get("E2E_ISO_NEXT_VERSION"),
+		tap:     get("E2E_ISO_TAP"),
 	}
 	for k, v := range map[string]string{
 		"OVMF_CODE": e.suite.ovmfCode, "OVMF_VARS": e.suite.ovmfVars, "E2E_IMAGE_OUT": e.suite.out,
@@ -119,6 +133,7 @@ func TestSignedISO(t *testing.T) {
 		verify  = "signed ISO: the EFI boot image's BOOTX64.EFI and /cryptos.uki are the signed UKI, sbverify --cert passes on both, the .sig verifies"
 		install = "signed ISO: boots on a blank disk, installs a nodeid Root over the maintenance API, the disk boots the signed UKI and serves image upgrades"
 		upgrade = "signed ISO: a second ISO's UKI, signed with the same key, stages, activates and boots"
+		noDHCP  = "signed ISO: on a link with no DHCP server, the node booted from the ISO serves the maintenance API on its self-assigned link-local address"
 	)
 	s.step(verify, nil, func(t *testing.T) { isoStepVerify(t, st) })
 	s.step(install, []string{verify}, func(t *testing.T) { isoStepInstall(t, s, st) })
@@ -127,6 +142,71 @@ func TestSignedISO(t *testing.T) {
 	if st.node != nil {
 		st.node.stop()
 	}
+	s.step(noDHCP, []string{verify}, func(t *testing.T) { isoStepLinkLocal(t, s, st) })
+}
+
+// linkLocalFromMAC is the RFC 3927 address a CryptOS node gives itself on a
+// NIC with this MAC when no DHCP server answers: the first two bytes of the
+// MAC's SHA-256, taken into 169.254.1.0 to 169.254.254.255.
+func linkLocalFromMAC(t *testing.T, s string) string {
+	t.Helper()
+	mac, err := net.ParseMAC(s)
+	if err != nil {
+		t.Fatalf("parse MAC %s: %v", s, err)
+	}
+	sum := sha256.Sum256(mac)
+	n := binary.BigEndian.Uint16(sum[:2]) % (254 * 256)
+	return fmt.Sprintf("169.254.%d.%d", 1+n/256, n%256)
+}
+
+// isoStepLinkLocal boots the signed ISO on a blank disk with its NIC on a
+// host tap device that has no DHCP server behind it. The kernel's ip=dhcp
+// gets no answer, the node assigns itself the link-local address its MAC
+// gives, and the host, on its own 169.254.0.0/16 address on that link,
+// reaches the maintenance API there the way a laptop on a direct cable does.
+func isoStepLinkLocal(t *testing.T, s *suite, st *isoState) {
+	if st.env.tap == "" {
+		t.Skip("no tap link with no DHCP server (E2E_ISO_TAP); test/image/run-iso.sh makes one when it can use sudo")
+	}
+	dir := filepath.Join(s.env.out, "vm-iso-linklocal")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("vm dir: %v", err)
+	}
+	v := &vm{
+		s: s, name: "iso-linklocal", dir: dir, uuid: "564d0007-0000-0000-0000-00000000e2e7",
+		tap: st.env.tap, mac: isoLinkLocalMAC, admin: st.admin, iso: st.env.iso,
+	}
+	v.disk = filepath.Join(dir, "disk.img")
+	v.cover = filepath.Join(dir, "cover.img")
+	for _, d := range []struct{ path, size string }{{v.disk, "2G"}, {v.cover, "128M"}} {
+		if out, err := exec.Command("truncate", "-s", d.size, d.path).CombinedOutput(); err != nil {
+			t.Fatalf("create %s: %v\n%s", d.path, err, out)
+		}
+	}
+	mustRun(t, "mformat", "-i", v.cover, "-v", "COVER", "::")
+	v.vars = filepath.Join(dir, "OVMF_VARS.fd")
+	copyFile(t, s.env.ovmfVars, v.vars)
+
+	// The kernel's ip=dhcp tries for a while before it gives up, and only
+	// then does the node assign its link-local address.
+	limit := 6 * time.Minute
+	if !strings.HasPrefix(s.env.accel, "kvm") {
+		limit = 20 * time.Minute
+	}
+	addr := linkLocalFromMAC(t, isoLinkLocalMAC)
+	v.start(t)
+	defer v.stop()
+	var status string
+	eventually(t, "the maintenance API on the node's link-local address "+addr, limit, func() (bool, string) {
+		out, err := run(t, "", s.env.cryptosctl, "--endpoint", addr+":443", "--insecure", "status")
+		if err != nil {
+			return false, out + "\n" + lastLines(v.serial.String(), 20)
+		}
+		status = out
+		return true, ""
+	})
+	t.Logf("status on %s:\n%s", addr, status)
+	note(t, "no DHCP server: the node took "+addr+" from its MAC and served the maintenance API there")
 }
 
 // isoStepVerify takes both copies of the UKI out of the signed ISO with

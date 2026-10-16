@@ -295,6 +295,10 @@ type vm struct {
 	// iso, when set, is an ISO attached as a CD-ROM that the firmware boots
 	// while the disk has nothing bootable on it.
 	iso string
+	// tap, when set, puts the VM's NIC on that host tap device instead of
+	// QEMU's user network, which always runs a DHCP server. mac sets the
+	// NIC's address. mgmtPort and forwards do not apply to a tap VM.
+	tap, mac string
 }
 
 type admin struct{ cert, key string }
@@ -358,9 +362,16 @@ func (v *vm) start(t *testing.T) time.Time {
 		"-device", "virtio-blk-pci,drive=disk,bootindex=1",
 		"-drive", "if=none,id=cover,format=raw,file=" + v.cover,
 		"-device", "virtio-blk-pci,drive=cover,serial=cryptos-cover",
-		"-netdev", "user,id=n0,net=10.0.0.0/24,host=10.0.0.1,dns=10.0.0.3," + strings.Join(append([]string{
-			"hostfwd=tcp:127.0.0.1:" + v.mgmtPort + "-" + suiteNodeAddr + ":443"}, v.forwards...), ","),
-		"-device", "virtio-net-pci,netdev=n0",
+	}
+	if v.tap != "" {
+		args = append(args,
+			"-netdev", "tap,id=n0,ifname="+v.tap+",script=no,downscript=no",
+			"-device", "virtio-net-pci,netdev=n0,mac="+v.mac)
+	} else {
+		args = append(args,
+			"-netdev", "user,id=n0,net=10.0.0.0/24,host=10.0.0.1,dns=10.0.0.3,"+strings.Join(append([]string{
+				"hostfwd=tcp:127.0.0.1:" + v.mgmtPort + "-" + suiteNodeAddr + ":443"}, v.forwards...), ","),
+			"-device", "virtio-net-pci,netdev=n0")
 	}
 	if strings.HasPrefix(e.accel, "kvm") {
 		args = append(args, "-cpu", "host")
