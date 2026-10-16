@@ -2,12 +2,13 @@ name: Release
 
 # One workflow proves a release, on GitHub-hosted runners only: guard the
 # pins, a hosted build of the services, a reproducibility check, the QEMU
-# full-image suite, the unsigned assets, then the tested section of the
-# notes. There is no ESXi gate and no self-hosted runner. See docs/release.md.
+# full-image suite, then the unsigned assets. There is no ESXi gate and no
+# self-hosted runner, and the workflow never edits the release notes. See
+# docs/release.md.
 #
 # Two ways in:
-#   - a v* tag push: the authoritative run, on the exact tag (assets and
-#     notes run only here, since there is no release yet on a rehearsal).
+#   - a v* tag push: the authoritative run, on the exact tag (assets run
+#     only here, since there is no release yet on a rehearsal).
 #   - workflow_dispatch on main, by the owner only: the full rehearsal (every
 #     job but assets, which only ever runs on a tag). It proves a draft's
 #     pins before I publish it, which is what creates the tag. `guard` also
@@ -236,8 +237,8 @@ jobs:
         run: task release:reproducible
 
   # The release's proof: the same QEMU full-image suite ci-e2e-image.yml runs
-  # nightly and on image pull requests, on this exact commit. Its step table
-  # is the tested section of the notes.
+  # nightly and on image pull requests, on this exact commit. assets refuses
+  # to run when it skipped.
   e2e:
     name: "Boot the image in QEMU and run the full-image suite"
     needs: reproducibility
@@ -389,34 +390,3 @@ jobs:
             exit 1
           fi
           gh release upload "$TAG" dist/* --clobber
-
-  notes:
-    name: "Add how this release was tested"
-    needs: [e2e, assets]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write # edit the release body; never a tag or a file
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.ref_name }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Write the suite summary
-        env:
-          SUITE_SUMMARY: ${{ needs.e2e.outputs.summary }}
-        run: printf '%s\n' "$SUITE_SUMMARY" > "${{ runner.temp }}/suite-summary.md"
-
-      - name: Render and publish the tested section
-        env:
-          NOTES_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          NOTES_TAG: ${{ env.TAG }}
-        run: |
-          set -euo pipefail
-          gh release view "$TAG" --json body -q .body \
-            | bash build/release/notes.sh "${{ runner.temp }}/suite-summary.md" \
-            | gh release edit "$TAG" --notes-file -

@@ -27,21 +27,21 @@ number.
 - **A merge freeze** runs from the moment the pins are set until the appliance is published:
   Release Drafter's draft targets `main`, so a later merge would move the draft and the published
   tag would land on the wrong commit.
-- **Tags are immutable** once pushed (a repository ruleset on `refs/tags/v*`), except that this
-  workflow's `notes` job edits the release body after publish to add how it was tested.
+- **Tags are immutable** once pushed (a repository ruleset on `refs/tags/v*`). The release notes
+  are Release Drafter's notes as published; no workflow edits them.
 
 ## The workflow (`.github/workflows/release.yml`)
 
 Two ways in, one pipeline:
 
 - **Rehearsal** — `workflow_dispatch` on `main`, by me only (`guard` refuses a dispatch against any
-  other ref, so `assets` can never run off a manual dispatch). Runs everything except `notes` (there
-  is no tagged release yet to add a tested section to). This is the pre-publish proof: I only
+  other ref, so `assets` can never run off a manual dispatch). Runs everything except `assets` (there
+  is no tagged release yet to attach them to). This is the pre-publish proof: I only
   publish a draft after a green rehearsal against that draft's pins.
 - **Release** — a `v*` tag push. The authoritative run, on the exact tag.
 
 ```text
-guard -> services -> reproducibility -> e2e -> assets -> notes
+guard -> services -> reproducibility -> e2e -> assets
 ```
 
 | Job | Runs on | Does |
@@ -49,9 +49,8 @@ guard -> services -> reproducibility -> e2e -> assets -> notes
 | `guard` | hosted | `task release:guard`: `release/pins.yaml` is well-formed, every pin is a full commit SHA, every pin is reachable, and the `cryptos-node` pin matches `go.mod` |
 | `services` | hosted | builds the FleetOS Manager image from the pinned `cryptos-manager` and `cryptos-web` commits and runs it read-only with its health check, builds the web console and runs its release-bundle check, and lints `chart/fleet-manager`; pushes nothing |
 | `reproducibility` | hosted | `task release:reproducible`: builds the unsigned image twice from the same commit in separate workspaces and compares every output byte for byte |
-| `e2e` | hosted | calls `ci-e2e-image.yml`, the QEMU full-image suite, on this commit: boots the real image (OVMF, with a software TPM) as a Root and an Intermediate and drives every step over the mTLS API; its step table is the release's proof |
+| `e2e` | hosted | calls `ci-e2e-image.yml`, the QEMU full-image suite, on this commit: boots the real image (OVMF, with a software TPM) as a Root and an Intermediate and drives every step over the mTLS API; the run's job summary shows its step table |
 | `assets` | hosted, tag only | refuses to run if the suite skipped, then builds the unsigned ISOs and UKIs (`tpm` and `nodeid`) and `cryptosctl`, checks nothing is signed, and attaches them with `SHA256SUMS` and `build-manifest.json` to the tag's release |
-| `notes` | hosted, tag only | adds "How this release was tested" to the release body: "Proven on CI (QEMU suite); no ESXi gate.", the commit set, the suite's step table and a link to the run |
 
 `guard` runs on both entry points. On a rehearsal dispatch it only proves the pins are internally
 consistent, since the other repos' tags do not exist yet to check against. It also prints each
@@ -69,8 +68,8 @@ live nodes are not proven per release.
 
 ## Checking what you build
 
-- The release notes list every repo's tag and commit SHA; `git rev-parse v0.1.0-rc.1^{commit}` in a
-  fresh clone of each repo has to print the listed SHA.
+- `release/pins.yaml` at the appliance's tag lists every repo's commit SHA; `git rev-parse
+  v0.1.0-rc.1^{commit}` in a fresh clone of each repo has to print the pinned SHA.
 - The Go modules (`cryptos-node`, `cryptos-manager`, `cryptos-appliance`) are recorded in the
   public Go checksum database, so `go mod download` refuses altered source.
 - The image you build carries `build-manifest.json` and stamped build info naming the
