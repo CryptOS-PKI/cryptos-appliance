@@ -2,7 +2,9 @@
 # Run the bridge upgrade test: boot the bridge build (cryptos-node a77ae5b)
 # in QEMU (swtpm, OVMF, Secure Boot off) as a nodeid Root, then upgrade it in
 # place to the candidate with the bridge-era cryptosctl, check it with the
-# current one, roll back to the bridge and upgrade again. The steps live in
+# current one, roll back to the bridge and upgrade again. It also boots a
+# candidate signed after the build with `cryptosctl image sign` and upgrades
+# it to a second image signed the same way (the sign-time anchor). The steps live in
 # test/integration/bridge_upgrade_test.go (TestBridgeUpgrade); each reports
 # pass, fail or skip in a summary table. Entry point for `task e2e:bridge` and
 # the ci-e2e-image workflow's bridge job; test/image/build-bridge.sh builds
@@ -10,7 +12,7 @@
 #
 # Linux only. Unlike run.sh it does not skip on a host without the tools: the
 # bridge upgrade is a release proof, so a missing tool fails the run.
-# Needs: go, qemu-system-x86_64, swtpm, sgdisk, mtools, OVMF.
+# Needs: go, qemu-system-x86_64, swtpm, sgdisk, mtools, OVMF, sbverify.
 #
 # Environment:
 #   E2E_OUT   where logs and the step summary go (default a temp dir,
@@ -24,10 +26,11 @@ dir="$root/build/out/bridge"
 log() { printf '[e2e:bridge] %s\n' "$*" >&2; }
 
 [ "$(uname -s)" = "Linux" ] || { log "SKIP: needs a Linux host (QEMU with KVM); this is $(uname -s)"; exit 0; }
-for tool in go qemu-system-x86_64 swtpm sgdisk mformat mcopy mmd ip; do
+for tool in go qemu-system-x86_64 swtpm sgdisk mformat mcopy mmd ip sbverify; do
   command -v "$tool" >/dev/null 2>&1 || { log "missing required tool: $tool"; exit 1; }
 done
-for f in bridge.uki bridge.uki.sig candidate.uki candidate.uki.sig cryptosctl cryptosctl-bridge versions.env; do
+for f in bridge.uki bridge.uki.sig candidate.uki candidate.uki.sig cryptosctl cryptosctl-bridge versions.env \
+  signed.uki signed.uki.sig signed-next.uki signed-next.uki.sig signed-cert.pem; do
   [ -f "$dir/$f" ] || { log "missing $dir/$f (run test/image/build-bridge.sh first)"; exit 1; }
 done
 # shellcheck source=/dev/null
@@ -73,6 +76,11 @@ set +e
       E2E_BRIDGE_CRYPTOSCTL="$dir/cryptosctl-bridge" \
       E2E_BRIDGE_VERSION="$E2E_BRIDGE_VERSION" \
       E2E_CANDIDATE_VERSION="$E2E_CANDIDATE_VERSION" \
+      E2E_SIGNED_UKI="$dir/signed.uki" \
+      E2E_SIGNED_NEXT_UKI="$dir/signed-next.uki" \
+      E2E_SIGNED_CERT="$dir/signed-cert.pem" \
+      E2E_SIGNED_VERSION="$E2E_SIGNED_VERSION" \
+      E2E_SIGNED_NEXT_VERSION="$E2E_SIGNED_NEXT_VERSION" \
       E2E_BRIDGE_HOST_IP="$host_ip" \
       E2E_IMAGE_ACCEL="$accel" \
       E2E_IMAGE_OUT="$out" \

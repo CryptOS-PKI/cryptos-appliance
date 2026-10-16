@@ -25,7 +25,9 @@ name: Full-image suite (QEMU Root and Intermediate)
 # checkout, both signed and anchored with one throwaway key made for the run,
 # and proves the in-place upgrade from one to the other, a rollback and a
 # second upgrade (test/image/build-bridge.sh, test/image/run-bridge.sh). It
-# needs nothing from the coverage image, so it runs beside the other two jobs.
+# also signs an unsigned candidate with `cryptosctl image sign` and a second
+# throwaway key and proves that sign-time anchor carries an upgrade. It needs
+# nothing from the coverage image, so it runs beside the other two jobs.
 #
 # release.yml also calls this workflow (workflow_call) on every release
 # rehearsal and tag, on the same commit: the suite is the release's proof
