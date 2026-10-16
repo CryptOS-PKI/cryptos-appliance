@@ -34,4 +34,5 @@ func (stubSystem) Mount(string, string, string, uintptr, string) error { return 
 func (stubSystem) AttachLoop(string) (string, error)                   { return "", errUnsupported }
 func (stubSystem) Chdir(string) error                                  { return errUnsupported }
 func (stubSystem) Chroot(string) error                                 { return errUnsupported }
+func (stubSystem) ReadFile(string) ([]byte, error)                     { return nil, errUnsupported }
 func (stubSystem) Exec(string, []string, []string) error               { return errUnsupported }
