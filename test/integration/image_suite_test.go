@@ -115,6 +115,12 @@ type suiteEnv struct {
 	cryptosctl                         string
 	hostIP, hostname                   string
 	kubeconfig, kubectl, nginx         string
+	// The FleetOS Manager step group: the manager and its end-to-end run
+	// built from a cryptos-manager checkout, their throwaway Postgres, and
+	// the node address run.sh redirects to the management forwards. All
+	// empty skips the group.
+	managerBin, managerE2E, managerDB string
+	mgmtAlias                         string
 }
 
 func loadSuiteEnv(t *testing.T) suiteEnv {
@@ -139,6 +145,10 @@ func loadSuiteEnv(t *testing.T) suiteEnv {
 		kubeconfig: get("E2E_IMAGE_KUBECONFIG"),
 		kubectl:    firstNonEmpty(get("E2E_IMAGE_KUBECTL"), "kubectl"),
 		nginx:      get("E2E_IMAGE_NGINX"),
+		managerBin: get("E2E_IMAGE_MANAGER_BIN"),
+		managerE2E: get("E2E_IMAGE_MANAGER_E2E"),
+		managerDB:  get("E2E_IMAGE_MANAGER_DB"),
+		mgmtAlias:  get("E2E_IMAGE_MGMT_ALIAS"),
 	}
 	for k, v := range map[string]string{
 		"OVMF_CODE": e.ovmfCode, "OVMF_VARS": e.ovmfVars, "E2E_IMAGE_UKI": e.uki,
@@ -630,9 +640,9 @@ pki:
 }
 
 type intProtocols struct {
-	acme, est, tsa bool
-	eabKeyB64      string
-	estPassSHA256  string
+	acme, est, tsa, scep bool
+	eabKeyB64            string
+	estPassSHA256        string
 }
 
 // intYAML is the Intermediate: TPM-held CA key, the Root pinned as its
@@ -716,6 +726,17 @@ pki:
       - username: %s
         password_sha256: %s
 `, estUser, p.estPassSHA256)
+	}
+	if p.scep {
+		// require_approval holds every initial enrolment for an operator
+		// decision, which the FleetOS Manager step group makes through the
+		// manager.
+		b.WriteString(`  scep:
+    profiles:
+      - profile: tls-server
+        require_approval: true
+    allowed_identifier_suffixes: [cryptos.test]
+`)
 	}
 	if p.tsa {
 		// allowed_networks is left empty: the request arrives through a
@@ -868,6 +889,7 @@ type suiteState struct {
 	backup    string
 	backupPwd string
 	tsaOn     bool
+	scepOn    bool
 }
 
 func TestImageSuite(t *testing.T) {
@@ -914,8 +936,6 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepAuditVerify(t, s, st) })
 	s.skipStep("SNTP: the clock line shows synced against a local NTP server",
 		"the suite runs no NTP server for the node to sync against yet")
-	s.skipStep("SCEP: sscep enrols",
-		"the suite runs no SCEP client against the node yet")
 	s.step("image upgrade in place on the software-key Root, then it still signs", []string{hier},
 		func(t *testing.T) { stepUpgrade(t, s, st, st.root, suiteRootCN) })
 	s.step("image upgrade in place on the TPM Intermediate, then it still issues", []string{hier},
@@ -928,6 +948,7 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepRekey(t, s, st) })
 	s.step("console reset over the serial line, on a throwaway node", []string{"escrow: import the Root backup onto a fresh node"},
 		func(t *testing.T) { stepConsoleReset(t, s, st) })
+	s.managerSteps(st, hier)
 
 	for _, v := range []*vm{st.spare, st.inter, st.root} {
 		if v != nil {
@@ -1237,13 +1258,13 @@ func stepRevocation(t *testing.T, s *suite, st *suiteState) {
 }
 
 // intConfig renders the Intermediate's config for the given ACME/EST state.
-// TSA rides along once stepTSA has turned it on (st.tsaOn): a YAML apply
-// that omits a protocol's block switches it off, so every later apply must
-// keep repeating a protocol that is meant to stay on.
+// TSA and SCEP ride along once a step has turned them on (st.tsaOn,
+// st.scepOn): a YAML apply that omits a protocol's block switches it off, so
+// every later apply must keep repeating a protocol that is meant to stay on.
 func (st *suiteState) intConfig(s *suite, acme, est bool) string {
 	sum := sha256.Sum256([]byte(st.estPass))
 	return intYAML(st.adminPEM, st.rootPEM, s.env.hostIP, intProtocols{
-		acme: acme, est: est, tsa: st.tsaOn, eabKeyB64: st.eabKeyB64, estPassSHA256: hex.EncodeToString(sum[:]),
+		acme: acme, est: est, tsa: st.tsaOn, scep: st.scepOn, eabKeyB64: st.eabKeyB64, estPassSHA256: hex.EncodeToString(sum[:]),
 	})
 }
 

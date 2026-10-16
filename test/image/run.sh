@@ -11,8 +11,12 @@
 # test/kind/versions.env), a coverage-instrumented cryptosctl, one /etc/hosts
 # line so the node's http-01 fetch, which goes through QEMU's DNS proxy to
 # this host's resolver, lands on the cluster ingress, and a local chronyd the
-# TSA step syncs the Intermediate's clock against. It then merges the
-# coverage counters the VMs and cryptosctl wrote.
+# TSA step syncs the Intermediate's clock against. With E2E_IMAGE_MANAGER_DIR
+# it also builds the FleetOS Manager and its end-to-end run from that
+# checkout, starts a throwaway Postgres for it, and redirects the nodes'
+# address to their management forwards so the manager dials each node at the
+# address its management certificate names. It then merges the coverage counters the VMs
+# and cryptosctl wrote.
 #
 # Linux only. It skips (exit 0) when the host is not Linux or lacks docker,
 # qemu, swtpm, chronyd or OVMF, and fails on anything else. Needs: docker,
@@ -25,6 +29,9 @@
 #                   test/image/build.sh makes it)
 #   E2E_OUT         where logs, the step summary and coverage go (default a
 #                   temp dir, printed at the end)
+#   E2E_IMAGE_MANAGER_DIR  a cryptos-manager checkout; the suite's manager
+#                   step group runs its test/e2e/esxi against the live nodes
+#                   (without it those steps skip)
 #   KEEP_CLUSTER=1  leave the kind cluster up afterwards
 set -euo pipefail
 
@@ -132,6 +139,8 @@ kubectl() { "$kubectl_bin" --kubeconfig "$kubeconfig" "$@"; }
 # ---- teardown --------------------------------------------------------------
 
 added_hosts=0
+added_nat=0
+manager_pg=""
 chrony_conf=""
 chrony_pid=""
 # shellcheck disable=SC2329 # run by the EXIT trap below
@@ -147,6 +156,13 @@ cleanup() {
   [ -n "$chrony_pid" ] && sudo rm -f "$chrony_pid" || true
   [ -n "$chrony_conf" ] && sudo rm -f "$chrony_conf" || true
   docker rm -f cryptos-e2e-nginx >/dev/null 2>&1 || true
+  [ -n "$manager_pg" ] && docker rm -f "$manager_pg" >/dev/null 2>&1 || true
+  if [ "$added_nat" = 1 ]; then
+    for port in $mgmt_ports; do
+      sudo iptables -t nat -D OUTPUT -d "$mgmt_alias/32" -p tcp --dport "$port" \
+        -j DNAT --to-destination "127.0.0.1:$port" >/dev/null 2>&1 || true
+    done
+  fi
   if [ "${KEEP_CLUSTER:-0}" = 1 ]; then
     log "KEEP_CLUSTER=1: leaving cluster $cluster up (kubeconfig: $kubeconfig)"
   else
@@ -255,6 +271,59 @@ cryptosctl="$work/cryptosctl"
 ( cd "$root" && CGO_ENABLED=0 go build -trimpath -cover -covermode=atomic -coverpkg=github.com/CryptOS-PKI/cryptos-node/... \
   -ldflags "$(bash build/ci/buildinfo.sh)" -o "$cryptosctl" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl )
 
+# ---- the FleetOS Manager's end-to-end run ------------------------------------
+
+# The manager verifies a node's management certificate against the host in
+# the endpoint it dials, and that certificate names the node's own address,
+# which every VM shares behind its own QEMU network. A DNAT rule sends this
+# host's connections to that address on each node's management port to the
+# node's loopback forward, so the manager dials 10.0.0.10:<port> and the name
+# matches without turning verification off. The address is not put on this
+# host itself: a connection from it would reach the guest from the guest's
+# own address and never complete.
+mgmt_alias="10.0.0.10"
+# The Root's and the Intermediate's management forwards
+# (test/integration/image_suite_test.go rootMgmtPort, intMgmtPort).
+mgmt_ports="4443 4444"
+manager_env=()
+manager_dir="${E2E_IMAGE_MANAGER_DIR:-}"
+if [ -n "$manager_dir" ]; then
+  [ -d "$manager_dir" ] || { log "E2E_IMAGE_MANAGER_DIR $manager_dir is not a directory"; exit 1; }
+  log "building the FleetOS Manager and its end-to-end run from $manager_dir"
+  ( cd "$manager_dir" &&
+    CGO_ENABLED=0 go build -trimpath -o "$work/manager" ./cmd/manager &&
+    CGO_ENABLED=0 go build -trimpath -o "$work/manager-e2e" ./test/e2e/esxi )
+
+  manager_pg="cryptos-e2e-manager-pg"
+  pg_pass="$(openssl rand -hex 16)"
+  docker rm -f "$manager_pg" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$manager_pg" -e POSTGRES_PASSWORD="$pg_pass" \
+    -p 127.0.0.1:15432:5432 "$MANAGER_POSTGRES_IMAGE" >/dev/null
+  for _ in $(seq 1 60); do
+    docker exec "$manager_pg" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec "$manager_pg" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 ||
+    { log "the manager's throwaway Postgres never became ready"; exit 1; }
+
+  # A locally generated connection redirected to 127.0.0.1 keeps its
+  # original source address, which the kernel only routes over loopback with
+  # route_localnet on.
+  sudo sysctl -q -w net.ipv4.conf.all.route_localnet=1
+  added_nat=1
+  for port in $mgmt_ports; do
+    sudo iptables -t nat -I OUTPUT 1 -d "$mgmt_alias/32" -p tcp --dport "$port" \
+      -j DNAT --to-destination "127.0.0.1:$port"
+  done
+  manager_env=(
+    E2E_IMAGE_MANAGER_BIN="$work/manager"
+    E2E_IMAGE_MANAGER_E2E="$work/manager-e2e"
+    E2E_IMAGE_MANAGER_DB="postgres://postgres:$pg_pass@127.0.0.1:15432/postgres?sslmode=disable"
+    E2E_IMAGE_MGMT_ALIAS="$mgmt_alias"
+  )
+  log "manager, end-to-end run and Postgres ready; $mgmt_alias:{$mgmt_ports} redirected to the management forwards"
+fi
+
 # ---- the suite ---------------------------------------------------------------
 
 log "running TestImageSuite"
@@ -274,7 +343,8 @@ set +e
       E2E_IMAGE_KUBECONFIG="$kubeconfig" \
       E2E_IMAGE_KUBECTL="$kubectl_bin" \
       E2E_IMAGE_NGINX="$NGINX_IMAGE" \
-      go test -tags=integration -count=1 -v -timeout 35m -run '^TestImageSuite$' ./test/integration/
+      env "${manager_env[@]}" \
+      go test -tags=integration -count=1 -v -timeout 45m -run '^TestImageSuite$' ./test/integration/
 ) 2>&1 | tee "$out/suite.log"
 rc=${PIPESTATUS[0]}
 set -e
