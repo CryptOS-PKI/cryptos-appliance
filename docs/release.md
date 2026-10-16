@@ -61,8 +61,10 @@ check those drafts by hand before publishing.
 Every job runs on GitHub-hosted runners: there is no self-hosted runner, lab host or credential
 in the release path. The QEMU suite is the only proof that the image boots and works. It covers
 the ceremony, subordinate signing, issuance, revocation and OCSP, ACME, EST, the RFC 3161 TSA,
-re-certify, escrow and restore, image upgrade in place on a software-key node and on a TPM node,
-and the console reset. Its bridge job proves the upgrade my production nodes will take: it builds
+re-certify, a re-key of the Intermediate (`ca rotate-key`, the Root's `ca sign-subordinate`, `ca
+submit-rotation`: the new key chains to the Root and issues, and a revocation made before the
+re-key stays on the CRL and over OCSP), escrow and restore, image upgrade in place on a
+software-key node and on a TPM node, and the console reset. Its bridge job proves the upgrade my production nodes will take: it builds
 the bridge build (cryptos-node a77ae5b, from that commit's own recipe) and the candidate, both
 signed and anchored with one throwaway key made for the run, boots the bridge as a nodeid Root with
 Secure Boot off, runs the ceremony, issues two leaves and revokes one, then stages the candidate
