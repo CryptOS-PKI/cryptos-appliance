@@ -147,6 +147,12 @@ tasks:
       - bash test/image/build.sh
       - bash test/image/run.sh
 
+  e2e:bridge:
+    desc: "[Linux] Bridge upgrade: build cryptos-node a77ae5b and this checkout with a throwaway key, boot the bridge in QEMU as a nodeid Root, upgrade it in place, roll back and upgrade again (needs KVM, qemu, swtpm, OVMF, sbsigntool, docker)"
+    cmds:
+      - bash test/image/build-bridge.sh
+      - bash test/image/run-bridge.sh
+
   test:integration:
     desc: "[Linux] Phase 1 QEMU + swtpm end-to-end acceptance (needs the toolchain; see test/integration)"
     cmds:
