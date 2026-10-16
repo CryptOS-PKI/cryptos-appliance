@@ -37,6 +37,13 @@ name: Full-image suite (QEMU Root and Intermediate)
 # throwaway key and proves that sign-time anchor carries an upgrade. It needs
 # nothing from the coverage image, so it runs beside the other two jobs.
 #
+# The iso job builds two unsigned ISOs with the release recipe, signs each
+# with `cryptosctl image sign` and a throwaway key, checks both copies of the
+# UKI inside with xorriso, mtools and sbverify, installs a node from the
+# first ISO over the maintenance API and upgrades it to the second image
+# (test/image/build-iso.sh, test/image/run-iso.sh). It also runs beside the
+# others.
+#
 # release.yml also calls this workflow (workflow_call) on every release
 # rehearsal and tag, on the same commit: the suite is the release's proof
 # that the image boots and works. Its step table (the `summary` output) is
@@ -353,5 +360,94 @@ jobs:
             ${{ runner.temp }}/e2e-bridge/*.md
             ${{ runner.temp }}/e2e-bridge/*.log
             ${{ runner.temp }}/e2e-bridge/vm-*/serial.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  iso:
+    name: Sign an unsigned ISO, install from it and upgrade (QEMU)
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-24.04
+    # Two rootfs builds and three boots (the ISO, the installed disk and the
+    # upgrade) on top of a vmware kernel build, which only partly reuses the
+    # kernel cache the other jobs fill with the generic kernel.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # buildinfo.sh and artifact-name.sh describe the build from the tags.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the image and ISO toolchain, QEMU, OVMF, sbsigntool and mtools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # The image job's list plus the ISO tools the release uses
+          # (xorriso, mtools, dosfstools), sbsigntool for sbverify and the VM
+          # tools.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc flex bison libelf-dev libssl-dev xz-utils \
+            squashfs-tools systemd-ukify systemd-boot-efi cpio python3-pefile \
+            xorriso mtools dosfstools sbsigntool \
+            qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools
+          qemu-system-x86_64 --version | head -1
+          xorriso -version 2>&1 | head -1
+
+      # Hosted Linux runners expose /dev/kvm, but only to root until a udev
+      # rule opens it up (the GitHub-documented way to use it).
+      - name: Enable KVM
+        run: |
+          set -euo pipefail
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+            ls -l /dev/kvm
+          else
+            echo "KVM: not available on this runner; the VM runs under TCG" >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      # The same caches as the image job. Nothing with key material is
+      # cached: the signing key lives on /dev/shm for the build step only.
+      - name: Cache the kernel build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: build/.work/kernel
+          key: kernel-amd64-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
+
+      - name: Cache the static tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            build/out/cryptsetup-amd64
+            build/out/mke2fs-amd64
+            build/out/sgdisk-amd64
+            build/out/mkfs.vfat-amd64
+          key: e2e-static-tools-amd64-${{ hashFiles('build/ci/versions.env', 'build/cryptsetup/**', 'build/e2fsprogs/**', 'build/gptfdisk/**', 'build/dosfstools/**') }}
+
+      - name: Build two unsigned ISOs and sign them with cryptosctl image sign
+        run: bash test/image/build-iso.sh
+
+      - name: Check the signed ISO, install from it, upgrade
+        env:
+          E2E_OUT: ${{ runner.temp }}/e2e-iso
+        run: bash test/image/run-iso.sh
+
+      - name: Keep the log, summary and serial console
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: e2e-iso-results
+          path: |
+            ${{ runner.temp }}/e2e-iso/*.md
+            ${{ runner.temp }}/e2e-iso/*.log
+            ${{ runner.temp }}/e2e-iso/vm-*/serial.log
           retention-days: 14
           if-no-files-found: warn

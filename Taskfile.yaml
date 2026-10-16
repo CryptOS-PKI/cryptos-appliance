@@ -153,6 +153,12 @@ tasks:
       - bash test/image/build-bridge.sh
       - bash test/image/run-bridge.sh
 
+  e2e:iso:
+    desc: "[Linux] Signed ISO: build two unsigned ISOs, sign them with cryptosctl image sign and a throwaway key, check both UKI copies, install a node from the first in QEMU and upgrade it to the second (needs KVM, qemu, OVMF, xorriso, mtools, sbsigntool, docker)"
+    cmds:
+      - bash test/image/build-iso.sh
+      - bash test/image/run-iso.sh
+
   test:integration:
     desc: "[Linux] Phase 1 QEMU + swtpm end-to-end acceptance (needs the toolchain; see test/integration)"
     cmds:

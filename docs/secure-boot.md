@@ -532,6 +532,59 @@ pull request and release: it signs an unsigned candidate with a throwaway key,
 checks it with `sbverify --cert`, boots it, and stages a second image signed
 the same way.
 
+### Sign a downloaded unsigned ISO
+
+`cryptosctl image sign` also takes the release's unsigned ISO. It signs the UKI
+inside it exactly as above and writes the signed UKI back over both copies the
+ISO carries: `EFI/BOOT/BOOTX64.EFI` in the EFI boot image, which the firmware
+boots, and `/cryptos.uki`, which the installer copies to the disk. You get an
+installer ISO for your key with no root, no `xorriso` and no rebuild.
+
+**Before you start**
+
+- `cryptosctl` from the same release, and the release's unsigned ISO for your
+  state-key mode, checked against `SHA256SUMS` as above.
+- Your RSA key and certificate from [step 1](#1-generate-your-signing-key-and-certificate)
+  (`sb.key` and `sb.crt`). The key must not be encrypted.
+
+1. Sign the ISO. With no `--out`, the output is the input name without
+   `-unsigned`:
+
+   ```bash
+   cryptosctl image sign \
+     --image cryptos-amd64-vmware-nodeid-unsigned-<build>.iso \
+     --key sb.key --cert sb.crt
+   ```
+
+   > Expected output: three files next to the input, the signed ISO
+   > `cryptos-amd64-vmware-nodeid-<build>.iso`, the signed UKI inside it
+   > `cryptos-amd64-vmware-nodeid-<build>.uki`, and that UKI's release signature
+   > `cryptos-amd64-vmware-nodeid-<build>.uki.sig`. The command lists both
+   > places in the ISO it signed. Nothing is written unless the tool has read
+   > the new ISO back and checked every copy, the signature and the anchor.
+
+2. Check the Secure Boot signature and the detached signature on the UKI
+   written beside the ISO, the same bytes as both copies inside it, with the
+   commands from steps 2 and 3 above (`sbverify --cert sb.crt ...uki` and
+   `openssl dgst -sha256 -verify sb.pub ...`).
+
+3. Install nodes from the signed ISO. Keep the `.uki` and `.uki.sig`: that pair
+   is what `cryptosctl image stage` sends, and any later ISO or UKI you sign
+   with the same key upgrades every node installed from this one.
+
+> [!CAUTION]
+> The EFI boot image inside the ISO keeps its size, so the signed UKI has to
+> fit the free space in it. `build/iso/build.sh` leaves 2 MiB free, far more
+> than signing adds. An ISO built some other way without that room is refused,
+> and nothing is written.
+
+The full-image suite's iso job runs these steps on every image pull request
+and release. It builds two unsigned ISOs with the release recipe and signs each
+with a throwaway key. It takes both copies out of the first with `xorriso` and
+`mcopy` and checks them with `sbverify --cert`. Then it boots that ISO in QEMU
+on a blank disk, installs a node from it over the maintenance API, and stages
+the second ISO's UKI onto the node.
+
 ## Key custody
 
 The key is the only thing that can produce an image your nodes will accept.
