@@ -99,7 +99,9 @@ func loadBridgeEnv(t *testing.T) bridgeEnv {
 }
 
 // bridgeRootYAML is the field's shape: a Root on the nodeid state key, with a
-// leaf profile and revocation published on a forward the runner reaches.
+// leaf profile and revocation published on a forward the runner reaches. A
+// Root issues leaves only with the irreversible acknowledgement, which lets
+// the test issue and revoke on the one node.
 func bridgeRootYAML(adminPEM, hostIP string) string {
 	return `apiVersion: cryptos.dev/v1alpha1
 kind: MachineConfig
@@ -115,6 +117,7 @@ pki:
   root_subject: {common_name: "` + bridgeRootCN + `", organization: "CryptOS E2E", country: "US"}
   root_validity_years: 10
   revocation_base_url: http://` + hostIP + `:` + bridgeRevPort + `
+  root_leaf_issuance: acknowledged-irreversible
   profiles:
     - name: ` + bridgeProfile + `
       key_alg: ECDSA-P384
@@ -353,7 +356,7 @@ func bridgeStepKept(t *testing.T, st *bridgeState) {
 	}
 	bridgeCheckRevocation(t, st)
 	cfg := v.mustCtl(t, "config", "get")
-	for _, want := range []string{"e2e-bridge", bridgeRootCN, "mode: nodeid", "name: " + bridgeProfile,
+	for _, want := range []string{"e2e-bridge", bridgeRootCN, "mode: nodeid", "name: " + bridgeProfile, "acknowledged-irreversible",
 		"http://" + st.env.hostIP + ":" + bridgeRevPort} {
 		if !strings.Contains(cfg, want) {
 			t.Fatalf("config after the upgrade is missing %q:\n%s", want, cfg)
