@@ -910,8 +910,8 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepEscrowExport(t, s, st) })
 	s.step("escrow: import the Root backup onto a fresh node", []string{"escrow: export refused on the TPM node, short passphrase refused, export from the Root"},
 		func(t *testing.T) { stepEscrowImport(t, s, st) })
-	s.skipStep("audit: the audit chain verifies",
-		"no RPC or cryptosctl command verifies the audit chain yet; audit.VerifyChain runs only in-process, and the log sits on the encrypted state partition")
+	s.step("audit: the audit chain verifies", []string{hier},
+		func(t *testing.T) { stepAuditVerify(t, s, st) })
 	s.skipStep("SNTP: the clock line shows synced against a local NTP server",
 		"the suite runs no NTP server for the node to sync against yet")
 	s.skipStep("SCEP: sscep enrols",
@@ -1634,6 +1634,18 @@ func stepEscrowImport(t *testing.T, s *suite, st *suiteState) {
 		t.Fatalf("restored node not ESTABLISHED:\n%s", status)
 	}
 	note(t, "wrong passphrase refused; the restored node holds the Root certificate")
+}
+
+func stepAuditVerify(t *testing.T, s *suite, st *suiteState) {
+	for _, v := range []*vm{st.root, st.inter} {
+		if v == nil {
+			continue
+		}
+		if out := v.mustCtl(t, "audit", "verify"); !strings.Contains(out, "audit chain intact") {
+			t.Fatalf("%s: audit verify:\n%s", v.name, out)
+		}
+	}
+	note(t, "audit chain intact on the Root and the Intermediate")
 }
 
 func stepConsoleReset(t *testing.T, s *suite, st *suiteState) {
