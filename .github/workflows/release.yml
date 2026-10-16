@@ -44,10 +44,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # setup-go puts the go install bin directory on the PATH, so task is
+      # found in the next step.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: Install go-task
         run: go install github.com/go-task/task/v3/cmd/task@latest
 
+      # gh reads the releases the guard compares against the pins.
       - name: Guard the pins
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: task release:guard
 
   services:
