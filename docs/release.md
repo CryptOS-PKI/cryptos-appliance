@@ -49,7 +49,7 @@ guard -> services -> reproducibility -> e2e -> assets
 | `guard` | hosted | `task release:guard`: `release/pins.yaml` is well-formed, every pin is a full commit SHA, every pin is reachable, and the `cryptos-node` pin matches `go.mod` |
 | `services` | hosted | builds the FleetOS Manager image from the pinned `cryptos-manager` and `cryptos-web` commits and runs it read-only with its health check, builds the web console and runs its release-bundle check, and lints `chart/fleet-manager`; pushes nothing |
 | `reproducibility` | hosted | `task release:reproducible`: builds the unsigned image twice from the same commit in separate workspaces and compares every output byte for byte |
-| `e2e` | hosted | calls `ci-e2e-image.yml`, the QEMU full-image suite, on this commit: boots the real image (OVMF, with a software TPM) as a Root and an Intermediate and drives every step over the mTLS API; the run's job summary shows its step table |
+| `e2e` | hosted | calls `ci-e2e-image.yml`, the QEMU full-image suite, on this commit: boots the real image (OVMF, with a software TPM) as a Root and an Intermediate and drives every step over the mTLS API, and in its bridge job upgrades a node on the bridge build (a77ae5b) to this commit; the run's job summary shows both step tables |
 | `assets` | hosted, tag only | refuses to run if the suite skipped, then builds the unsigned ISOs and UKIs (`tpm` and `nodeid`) and `cryptosctl`, checks nothing is signed, and attaches them with `SHA256SUMS` and `build-manifest.json` to the tag's release |
 
 `guard` runs on both entry points. On a rehearsal dispatch it only proves the pins are internally
@@ -62,8 +62,15 @@ Every job runs on GitHub-hosted runners: there is no self-hosted runner, lab hos
 in the release path. The QEMU suite is the only proof that the image boots and works. It covers
 the ceremony, subordinate signing, issuance, revocation and OCSP, ACME, EST, the RFC 3161 TSA,
 re-certify, escrow and restore, image upgrade in place on a software-key node and on a TPM node,
-and the console reset. Nothing in a release is run on VMware or other hardware: power cuts
-mid-upgrade, an upgrade from an older release and the FleetOS Manager's end-to-end run against
+and the console reset. Its bridge job proves the upgrade my production nodes will take: it builds
+the bridge build (cryptos-node a77ae5b, from that commit's own recipe) and the candidate, both
+signed and anchored with one throwaway key made for the run, boots the bridge as a nodeid Root with
+Secure Boot off, runs the ceremony, issues two leaves and revokes one, then stages the candidate
+with the bridge-era `cryptosctl` and activates it. The candidate has to answer on
+`cryptos.node.v1` with the same CA serial and key, list both leaves, show the revocation on the CRL
+and over OCSP, keep the config, pass `audit verify` and issue a new leaf. It then rolls back to the
+bridge, which has to answer again, and upgrades a second time. Nothing in a release is run on
+VMware or other hardware: power cuts mid-upgrade and the FleetOS Manager's end-to-end run against
 live nodes are not proven per release.
 
 ## Checking what you build

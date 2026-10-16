@@ -163,7 +163,9 @@ type stepResult struct {
 }
 
 type suite struct {
-	t       *testing.T
+	t *testing.T
+	// title heads the summary; empty means "Full-image suite".
+	title   string
 	env     suiteEnv
 	mu      sync.Mutex
 	results []stepResult
@@ -222,8 +224,12 @@ func note(t *testing.T, msg string) {
 }
 
 func (s *suite) writeSummary() {
+	title := s.title
+	if title == "" {
+		title = "Full-image suite"
+	}
 	var b strings.Builder
-	b.WriteString("## Full-image suite\n\n")
+	b.WriteString("## " + title + "\n\n")
 	b.WriteString("Booted image: `" + filepath.Base(s.env.uki) + "`, accelerator `" + s.env.accel + "`.\n\n")
 	b.WriteString("| # | Step | Result | Time | Notes |\n|---|---|---|---|---|\n")
 	counts := map[string]int{}
@@ -273,6 +279,9 @@ type vm struct {
 	trust    string
 	admin    admin
 	stopped  bool
+	// ctlBin, when set, is the cryptosctl this VM is driven with instead of
+	// the suite's, for an image that speaks an older API.
+	ctlBin string
 }
 
 type admin struct{ cert, key string }
@@ -477,7 +486,11 @@ func (v *vm) ctl(stdin string, args ...string) (string, error) {
 	}, args...)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, v.s.env.cryptosctl, full...)
+	bin := v.s.env.cryptosctl
+	if v.ctlBin != "" {
+		bin = v.ctlBin
+	}
+	cmd := exec.CommandContext(ctx, bin, full...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
