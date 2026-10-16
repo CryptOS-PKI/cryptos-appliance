@@ -127,7 +127,6 @@ tasks:
       - bash build/ci/build-manifest_test.sh
       - bash build/release/check-unsigned_test.sh
       - bash build/release/guard_test.sh
-      - bash build/release/notes_test.sh
       - bash build/release/pin_test.sh
       - bash build/release/reproducible_test.sh
       - bash build/iso/build_test.sh

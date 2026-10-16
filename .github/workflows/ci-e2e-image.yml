@@ -22,8 +22,8 @@ name: Full-image suite (QEMU Root and Intermediate)
 #
 # release.yml also calls this workflow (workflow_call) on every release
 # rehearsal and tag, on the same commit: the suite is the release's proof
-# that the image boots and works, and its step table (the `summary` output)
-# becomes the "How <tag> was tested" section of the release notes.
+# that the image boots and works. Its step table (the `summary` output) is
+# empty when the suite skipped, and release.yml then refuses the assets.
 on:
   schedule:
     - cron: "37 6 * * *"
