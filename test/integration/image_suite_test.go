@@ -292,6 +292,9 @@ type vm struct {
 	// ctlBin, when set, is the cryptosctl this VM is driven with instead of
 	// the suite's, for an image that speaks an older API.
 	ctlBin string
+	// iso, when set, is an ISO attached as a CD-ROM that the firmware boots
+	// while the disk has nothing bootable on it.
+	iso string
 }
 
 type admin struct{ cert, key string }
@@ -336,6 +339,14 @@ func (s *suite) newVMFrom(t *testing.T, uki, name, uuid, mgmtPort string, forwar
 
 func (v *vm) boot(t *testing.T) {
 	t.Helper()
+	started := v.start(t)
+	v.waitUp(t, -1, started, "first boot")
+}
+
+// start launches QEMU for the VM and returns when it started, without
+// waiting for the node.
+func (v *vm) start(t *testing.T) time.Time {
+	t.Helper()
 	e := v.s.env
 	args := []string{
 		"-machine", "q35,accel=" + e.accel, "-smp", "2", "-m", "2048",
@@ -353,6 +364,14 @@ func (v *vm) boot(t *testing.T) {
 	}
 	if strings.HasPrefix(e.accel, "kvm") {
 		args = append(args, "-cpu", "host")
+	}
+	if v.iso != "" {
+		// On the q35 machine's AHCI controller, which the kernel sees as
+		// sr0. The disk's bootindex comes first, so once the node has
+		// installed itself the firmware boots the disk instead.
+		args = append(args,
+			"-drive", "if=none,id=cd,media=cdrom,readonly=on,format=raw,file="+v.iso,
+			"-device", "ide-cd,drive=cd,bus=ide.0,bootindex=2")
 	}
 	if v.withTPM {
 		sock := v.startTPM(t)
@@ -376,7 +395,7 @@ func (v *vm) boot(t *testing.T) {
 		t.Fatalf("start qemu for %s: %v", v.name, err)
 	}
 	v.s.t.Cleanup(func() { v.stop() })
-	v.waitUp(t, -1, started, "first boot")
+	return started
 }
 
 // startTPM starts the VM's swtpm, tied to the whole suite rather than to the

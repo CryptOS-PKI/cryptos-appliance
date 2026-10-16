@@ -1,5 +1,5 @@
-github.com/CryptOS-PKI/cryptos-node v0.0.0-20261016122123-01cf9e529716 h1:R9+AxVwLjcD8zALb258YJZDzoVxx9S4BOB5yDu/p6zo=
-github.com/CryptOS-PKI/cryptos-node v0.0.0-20261016122123-01cf9e529716/go.mod h1:c3usodsgeF++zA6efQNclo0d1U3utURi3ylyGFAYw0Y=
+github.com/CryptOS-PKI/cryptos-node v0.0.0-20261016155251-a4b9bae0bcf4 h1:XoZKr6zu6RO+1h5VhFRdutNDIJHOA+qF0ENPiId0My4=
+github.com/CryptOS-PKI/cryptos-node v0.0.0-20261016155251-a4b9bae0bcf4/go.mod h1:c3usodsgeF++zA6efQNclo0d1U3utURi3ylyGFAYw0Y=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
