@@ -64,8 +64,17 @@ the ceremony, subordinate signing, issuance, revocation and OCSP, ACME, EST, the
 re-certify, a re-key of the Intermediate (`ca rotate-key`, the Root's `ca sign-subordinate`, `ca
 submit-rotation`: the new key chains to the Root and issues, and a revocation made before the
 re-key stays on the CRL and over OCSP), escrow and restore, image upgrade in place on a
-software-key node and on a TPM node, and the console reset. Its bridge job proves the upgrade my production nodes will take: it builds
-the bridge build (cryptos-node a77ae5b, from that commit's own recipe) and the candidate, both
+software-key node and on a TPM node, and the console reset. It then runs the FleetOS Manager's own
+end-to-end run (cryptos-manager `test/e2e/esxi`, built from the pinned `cryptos-manager` commit)
+against the same Root and Intermediate, and reports each of its steps in the suite's table:
+profiles, a real SCEP device enrolment approved through the manager and a second one rejected,
+issuance and revocation, a config push, the image lifecycle (stage, activate, roll back and
+activate again, with an image signed in the same run), the escrow export and the operator
+credential cycle. Its own re-key, node linking, escrow import and decommission report skipped:
+they need an explicit target or a spare node, and the suite re-keys the Intermediate itself.
+
+The suite's bridge job proves the upgrade my production nodes will take: it builds the bridge
+build (cryptos-node a77ae5b, from that commit's own recipe) and the candidate, both
 signed and anchored with one throwaway key made for the run, boots the bridge as a nodeid Root with
 Secure Boot off, runs the ceremony, issues two leaves and revokes one, then stages the candidate
 with the bridge-era `cryptosctl` and activates it. The candidate has to answer on
@@ -75,8 +84,7 @@ bridge, which has to answer again, and upgrades a second time. The same job prov
 anchor: it builds the candidate unsigned with no anchor, signs it with `cryptosctl image sign` and a
 second throwaway key, checks it with `sbverify --cert`, boots it, refuses an image signed by the
 other key, and stages, activates and boots a second image signed the same way. Nothing in a release is run on
-VMware or other hardware: power cuts mid-upgrade and the FleetOS Manager's end-to-end run against
-live nodes are not proven per release.
+VMware or other hardware: power cuts mid-upgrade are not proven per release.
 
 ## Checking what you build
 

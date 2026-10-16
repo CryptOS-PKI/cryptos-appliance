@@ -115,6 +115,11 @@ type suiteEnv struct {
 	cryptosctl                         string
 	hostIP, hostname                   string
 	kubeconfig, kubectl, nginx         string
+	// The FleetOS Manager step group: the manager and its end-to-end run
+	// built from a cryptos-manager checkout, their throwaway Postgres, and
+	// the node address run.sh put on loopback. All empty skips the group.
+	managerBin, managerE2E, managerDB string
+	mgmtAlias                         string
 }
 
 func loadSuiteEnv(t *testing.T) suiteEnv {
@@ -139,6 +144,10 @@ func loadSuiteEnv(t *testing.T) suiteEnv {
 		kubeconfig: get("E2E_IMAGE_KUBECONFIG"),
 		kubectl:    firstNonEmpty(get("E2E_IMAGE_KUBECTL"), "kubectl"),
 		nginx:      get("E2E_IMAGE_NGINX"),
+		managerBin: get("E2E_IMAGE_MANAGER_BIN"),
+		managerE2E: get("E2E_IMAGE_MANAGER_E2E"),
+		managerDB:  get("E2E_IMAGE_MANAGER_DB"),
+		mgmtAlias:  get("E2E_IMAGE_MGMT_ALIAS"),
 	}
 	for k, v := range map[string]string{
 		"OVMF_CODE": e.ovmfCode, "OVMF_VARS": e.ovmfVars, "E2E_IMAGE_UKI": e.uki,
@@ -285,6 +294,16 @@ type vm struct {
 }
 
 type admin struct{ cert, key string }
+
+// mgmtAliasForward is the extra forward that puts a node's management
+// listener on the node's own address on this host's loopback, for the
+// FleetOS Manager step group, or nothing when run.sh did not add the address.
+func (s *suite) mgmtAliasForward(mgmtPort string) []string {
+	if s.env.mgmtAlias == "" {
+		return nil
+	}
+	return []string{"hostfwd=tcp:" + s.env.mgmtAlias + ":" + mgmtPort + "-" + suiteNodeAddr + ":443"}
+}
 
 func (s *suite) newVM(t *testing.T, name, uuid, mgmtPort string, forwards []string, machineYAML string, a admin) *vm {
 	t.Helper()
@@ -630,9 +649,9 @@ pki:
 }
 
 type intProtocols struct {
-	acme, est, tsa bool
-	eabKeyB64      string
-	estPassSHA256  string
+	acme, est, tsa, scep bool
+	eabKeyB64            string
+	estPassSHA256        string
 }
 
 // intYAML is the Intermediate: TPM-held CA key, the Root pinned as its
@@ -716,6 +735,17 @@ pki:
       - username: %s
         password_sha256: %s
 `, estUser, p.estPassSHA256)
+	}
+	if p.scep {
+		// require_approval holds every initial enrolment for an operator
+		// decision, which the FleetOS Manager step group makes through the
+		// manager.
+		b.WriteString(`  scep:
+    profiles:
+      - profile: tls-server
+        require_approval: true
+    allowed_identifier_suffixes: [cryptos.test]
+`)
 	}
 	if p.tsa {
 		// allowed_networks is left empty: the request arrives through a
@@ -868,6 +898,7 @@ type suiteState struct {
 	backup    string
 	backupPwd string
 	tsaOn     bool
+	scepOn    bool
 }
 
 func TestImageSuite(t *testing.T) {
@@ -914,8 +945,6 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepAuditVerify(t, s, st) })
 	s.skipStep("SNTP: the clock line shows synced against a local NTP server",
 		"the suite runs no NTP server for the node to sync against yet")
-	s.skipStep("SCEP: sscep enrols",
-		"the suite runs no SCEP client against the node yet")
 	s.step("image upgrade in place on the software-key Root, then it still signs", []string{hier},
 		func(t *testing.T) { stepUpgrade(t, s, st, st.root, suiteRootCN) })
 	s.step("image upgrade in place on the TPM Intermediate, then it still issues", []string{hier},
@@ -928,6 +957,7 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepRekey(t, s, st) })
 	s.step("console reset over the serial line, on a throwaway node", []string{"escrow: import the Root backup onto a fresh node"},
 		func(t *testing.T) { stepConsoleReset(t, s, st) })
+	s.managerSteps(st, hier)
 
 	for _, v := range []*vm{st.spare, st.inter, st.root} {
 		if v != nil {
@@ -937,7 +967,7 @@ func TestImageSuite(t *testing.T) {
 }
 
 func stepRootCeremony(t *testing.T, s *suite, st *suiteState) {
-	st.root = s.newVM(t, "root", "564d0001-0000-0000-0000-00000000e2e1", rootMgmtPort, nil, rootYAML(st.adminPEM, "e2e-root"), st.admin)
+	st.root = s.newVM(t, "root", "564d0001-0000-0000-0000-00000000e2e1", rootMgmtPort, s.mgmtAliasForward(rootMgmtPort), rootYAML(st.adminPEM, "e2e-root"), st.admin)
 	st.root.boot(t)
 	out := st.root.mustCtl(t, "ceremony", "start", "--config", filepath.Join(st.root.dir, "machine.yaml"))
 	for _, want := range []string{"KEY_CREATED", "CERT_SIGNED", "MANIFEST_WRITTEN", "ADMIN_ROTATED", "COMPLETE"} {
@@ -966,12 +996,12 @@ func stepRootCeremony(t *testing.T, s *suite, st *suiteState) {
 
 func stepIntermediate(t *testing.T, s *suite, st *suiteState) {
 	cfg := intYAML(st.adminPEM, st.rootPEM, s.env.hostIP, intProtocols{})
-	st.inter = s.newVM(t, "intermediate", "564d0002-0000-0000-0000-00000000e2e2", intMgmtPort, []string{
+	st.inter = s.newVM(t, "intermediate", "564d0002-0000-0000-0000-00000000e2e2", intMgmtPort, append([]string{
 		"hostfwd=tcp:" + s.env.hostIP + ":" + intRevPort + "-" + suiteNodeAddr + ":80",
 		"hostfwd=tcp:127.0.0.1:" + intACMEPort + "-" + suiteNodeAddr + ":8555",
 		"hostfwd=tcp:127.0.0.1:" + intESTPort + "-" + suiteNodeAddr + ":8443",
 		"hostfwd=tcp:127.0.0.1:" + intTSAPort + "-" + suiteNodeAddr + ":318",
-	}, cfg, st.admin)
+	}, s.mgmtAliasForward(intMgmtPort)...), cfg, st.admin)
 	st.inter.boot(t)
 	if status := st.inter.status(t); !strings.Contains(status, "Identity:        AWAITING_CERT") || !strings.Contains(status, "TPM:             OK") {
 		t.Fatalf("intermediate before signing: want AWAITING_CERT with the TPM OK:\n%s", status)
@@ -1237,13 +1267,13 @@ func stepRevocation(t *testing.T, s *suite, st *suiteState) {
 }
 
 // intConfig renders the Intermediate's config for the given ACME/EST state.
-// TSA rides along once stepTSA has turned it on (st.tsaOn): a YAML apply
-// that omits a protocol's block switches it off, so every later apply must
-// keep repeating a protocol that is meant to stay on.
+// TSA and SCEP ride along once a step has turned them on (st.tsaOn,
+// st.scepOn): a YAML apply that omits a protocol's block switches it off, so
+// every later apply must keep repeating a protocol that is meant to stay on.
 func (st *suiteState) intConfig(s *suite, acme, est bool) string {
 	sum := sha256.Sum256([]byte(st.estPass))
 	return intYAML(st.adminPEM, st.rootPEM, s.env.hostIP, intProtocols{
-		acme: acme, est: est, tsa: st.tsaOn, eabKeyB64: st.eabKeyB64, estPassSHA256: hex.EncodeToString(sum[:]),
+		acme: acme, est: est, tsa: st.tsaOn, scep: st.scepOn, eabKeyB64: st.eabKeyB64, estPassSHA256: hex.EncodeToString(sum[:]),
 	})
 }
 
