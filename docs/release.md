@@ -15,9 +15,15 @@ number.
 - **Publishing the release-drafter draft is the tag.** Release Drafter keeps one draft per repo on
   every push to `main`. I publish each draft as a prerelease; publishing creates the tag at the
   draft's target commit. Nothing tags by hand and no workflow creates a tag.
-- **Order:** `cryptos-node`, `cryptos-manager`, `cryptos-web` and `docs` first, at the commits
+- **Order:** `cryptos-node`, `cryptos-web`, `cryptos-manager` and `docs` first, at the commits
   `release/pins.yaml` names; `cryptos-appliance` last. Publishing the appliance's draft is what
   starts this workflow, and its `guard` job checks the other tags already sit at their pins.
+- **cryptos-web before cryptos-manager, same version:** the two are versioned in lockstep. The
+  manager's release image embeds the web console from `cryptos-web`'s tag of the same name and
+  fails when that release isn't published yet. Each repo's Release Drafter resolves its next
+  version from its own labels, so I check both drafts carry the same version before publishing
+  either; if they differ, I dispatch the lower one's Release Drafter workflow with a `version`
+  input to match.
 - **A merge freeze** runs from the moment the pins are set until the appliance is published:
   Release Drafter's draft targets `main`, so a later merge would move the draft and the published
   tag would land on the wrong commit.
