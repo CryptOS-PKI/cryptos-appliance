@@ -117,7 +117,8 @@ type suiteEnv struct {
 	kubeconfig, kubectl, nginx         string
 	// The FleetOS Manager step group: the manager and its end-to-end run
 	// built from a cryptos-manager checkout, their throwaway Postgres, and
-	// the node address run.sh put on loopback. All empty skips the group.
+	// the node address run.sh redirects to the management forwards. All
+	// empty skips the group.
 	managerBin, managerE2E, managerDB string
 	mgmtAlias                         string
 }
@@ -294,16 +295,6 @@ type vm struct {
 }
 
 type admin struct{ cert, key string }
-
-// mgmtAliasForward is the extra forward that puts a node's management
-// listener on the node's own address on this host's loopback, for the
-// FleetOS Manager step group, or nothing when run.sh did not add the address.
-func (s *suite) mgmtAliasForward(mgmtPort string) []string {
-	if s.env.mgmtAlias == "" {
-		return nil
-	}
-	return []string{"hostfwd=tcp:" + s.env.mgmtAlias + ":" + mgmtPort + "-" + suiteNodeAddr + ":443"}
-}
 
 func (s *suite) newVM(t *testing.T, name, uuid, mgmtPort string, forwards []string, machineYAML string, a admin) *vm {
 	t.Helper()
@@ -967,7 +958,7 @@ func TestImageSuite(t *testing.T) {
 }
 
 func stepRootCeremony(t *testing.T, s *suite, st *suiteState) {
-	st.root = s.newVM(t, "root", "564d0001-0000-0000-0000-00000000e2e1", rootMgmtPort, s.mgmtAliasForward(rootMgmtPort), rootYAML(st.adminPEM, "e2e-root"), st.admin)
+	st.root = s.newVM(t, "root", "564d0001-0000-0000-0000-00000000e2e1", rootMgmtPort, nil, rootYAML(st.adminPEM, "e2e-root"), st.admin)
 	st.root.boot(t)
 	out := st.root.mustCtl(t, "ceremony", "start", "--config", filepath.Join(st.root.dir, "machine.yaml"))
 	for _, want := range []string{"KEY_CREATED", "CERT_SIGNED", "MANIFEST_WRITTEN", "ADMIN_ROTATED", "COMPLETE"} {
@@ -996,12 +987,12 @@ func stepRootCeremony(t *testing.T, s *suite, st *suiteState) {
 
 func stepIntermediate(t *testing.T, s *suite, st *suiteState) {
 	cfg := intYAML(st.adminPEM, st.rootPEM, s.env.hostIP, intProtocols{})
-	st.inter = s.newVM(t, "intermediate", "564d0002-0000-0000-0000-00000000e2e2", intMgmtPort, append([]string{
+	st.inter = s.newVM(t, "intermediate", "564d0002-0000-0000-0000-00000000e2e2", intMgmtPort, []string{
 		"hostfwd=tcp:" + s.env.hostIP + ":" + intRevPort + "-" + suiteNodeAddr + ":80",
 		"hostfwd=tcp:127.0.0.1:" + intACMEPort + "-" + suiteNodeAddr + ":8555",
 		"hostfwd=tcp:127.0.0.1:" + intESTPort + "-" + suiteNodeAddr + ":8443",
 		"hostfwd=tcp:127.0.0.1:" + intTSAPort + "-" + suiteNodeAddr + ":318",
-	}, s.mgmtAliasForward(intMgmtPort)...), cfg, st.admin)
+	}, cfg, st.admin)
 	st.inter.boot(t)
 	if status := st.inter.status(t); !strings.Contains(status, "Identity:        AWAITING_CERT") || !strings.Contains(status, "TPM:             OK") {
 		t.Fatalf("intermediate before signing: want AWAITING_CERT with the TPM OK:\n%s", status)

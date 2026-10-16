@@ -13,9 +13,9 @@
 # this host's resolver, lands on the cluster ingress, and a local chronyd the
 # TSA step syncs the Intermediate's clock against. With E2E_IMAGE_MANAGER_DIR
 # it also builds the FleetOS Manager and its end-to-end run from that
-# checkout, starts a throwaway Postgres for it, and puts the nodes' address on
-# this host's loopback so the manager dials each node at the address its
-# management certificate names. It then merges the coverage counters the VMs
+# checkout, starts a throwaway Postgres for it, and redirects the nodes'
+# address to their management forwards so the manager dials each node at the
+# address its management certificate names. It then merges the coverage counters the VMs
 # and cryptosctl wrote.
 #
 # Linux only. It skips (exit 0) when the host is not Linux or lacks docker,
@@ -139,7 +139,7 @@ kubectl() { "$kubectl_bin" --kubeconfig "$kubeconfig" "$@"; }
 # ---- teardown --------------------------------------------------------------
 
 added_hosts=0
-added_alias=0
+added_nat=0
 manager_pg=""
 chrony_conf=""
 chrony_pid=""
@@ -157,8 +157,11 @@ cleanup() {
   [ -n "$chrony_conf" ] && sudo rm -f "$chrony_conf" || true
   docker rm -f cryptos-e2e-nginx >/dev/null 2>&1 || true
   [ -n "$manager_pg" ] && docker rm -f "$manager_pg" >/dev/null 2>&1 || true
-  if [ "$added_alias" = 1 ]; then
-    sudo ip addr del "$mgmt_alias/32" dev lo >/dev/null 2>&1 || true
+  if [ "$added_nat" = 1 ]; then
+    for port in $mgmt_ports; do
+      sudo iptables -t nat -D OUTPUT -d "$mgmt_alias/32" -p tcp --dport "$port" \
+        -j DNAT --to-destination "127.0.0.1:$port" >/dev/null 2>&1 || true
+    done
   fi
   if [ "${KEEP_CLUSTER:-0}" = 1 ]; then
     log "KEEP_CLUSTER=1: leaving cluster $cluster up (kubeconfig: $kubeconfig)"
@@ -272,11 +275,16 @@ cryptosctl="$work/cryptosctl"
 
 # The manager verifies a node's management certificate against the host in
 # the endpoint it dials, and that certificate names the node's own address,
-# which every VM shares behind its own QEMU network. That address goes on
-# this host's loopback, and the suite adds a forward on it for each node's
-# management port, so the manager dials 10.0.0.10:<port> and the name
-# matches without turning verification off.
+# which every VM shares behind its own QEMU network. A DNAT rule sends this
+# host's connections to that address on each node's management port to the
+# node's loopback forward, so the manager dials 10.0.0.10:<port> and the name
+# matches without turning verification off. The address is not put on this
+# host itself: a connection from it would reach the guest from the guest's
+# own address and never complete.
 mgmt_alias="10.0.0.10"
+# The Root's and the Intermediate's management forwards
+# (test/integration/image_suite_test.go rootMgmtPort, intMgmtPort).
+mgmt_ports="4443 4444"
 manager_env=()
 manager_dir="${E2E_IMAGE_MANAGER_DIR:-}"
 if [ -n "$manager_dir" ]; then
@@ -298,17 +306,22 @@ if [ -n "$manager_dir" ]; then
   docker exec "$manager_pg" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 ||
     { log "the manager's throwaway Postgres never became ready"; exit 1; }
 
-  if ! ip -o addr show dev lo | grep -q " $mgmt_alias/"; then
-    sudo ip addr add "$mgmt_alias/32" dev lo
-    added_alias=1
-  fi
+  # A locally generated connection redirected to 127.0.0.1 keeps its
+  # original source address, which the kernel only routes over loopback with
+  # route_localnet on.
+  sudo sysctl -q -w net.ipv4.conf.all.route_localnet=1
+  added_nat=1
+  for port in $mgmt_ports; do
+    sudo iptables -t nat -I OUTPUT 1 -d "$mgmt_alias/32" -p tcp --dport "$port" \
+      -j DNAT --to-destination "127.0.0.1:$port"
+  done
   manager_env=(
     E2E_IMAGE_MANAGER_BIN="$work/manager"
     E2E_IMAGE_MANAGER_E2E="$work/manager-e2e"
     E2E_IMAGE_MANAGER_DB="postgres://postgres:$pg_pass@127.0.0.1:15432/postgres?sslmode=disable"
     E2E_IMAGE_MGMT_ALIAS="$mgmt_alias"
   )
-  log "manager, end-to-end run and Postgres ready; $mgmt_alias is on loopback"
+  log "manager, end-to-end run and Postgres ready; $mgmt_alias:{$mgmt_ports} redirected to the management forwards"
 fi
 
 # ---- the suite ---------------------------------------------------------------
