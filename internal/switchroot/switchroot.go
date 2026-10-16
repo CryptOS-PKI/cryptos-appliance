@@ -7,6 +7,11 @@
 // The shim mounts only /dev (needed to set up the loop device); it leaves
 // /proc, /sys, /run, and /tmp for the real init's EarlyMounts so the two
 // never fight over the same mount.
+//
+// The shim also carries a sign-time upgrade anchor across the pivot. The
+// signing step appends /upgrade-anchor.der to the UKI's measured .initrd;
+// the initramfs is out of reach once the real init runs, so the shim reads
+// the file and hands it to init as CRYPTOS_UPGRADE_ANCHOR.
 package switchroot
 
 /*
@@ -26,9 +31,11 @@ limitations under the License.
 */
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 )
 
 const (
@@ -38,6 +45,12 @@ const (
 	NewRoot = "/sysroot"
 	// InitPath is the real PID 1 inside the SquashFS, exec'd after pivot.
 	InitPath = "/init"
+	// AnchorPath is the sign-time upgrade anchor (a DER certificate) in the
+	// shim initramfs, present only when the signing step added one.
+	AnchorPath = "/upgrade-anchor.der"
+	// AnchorEnv is the variable the real init reads the anchor from, as
+	// standard base64 of the DER.
+	AnchorEnv = "CRYPTOS_UPGRADE_ANCHOR"
 
 	// msRDONLY / msMOVE are the stable MS_* flag values used here (defined
 	// locally so the sequence logic stays OS-independent and unit-testable).
@@ -55,6 +68,9 @@ type System interface {
 	AttachLoop(backingFile string) (string, error)
 	Chdir(dir string) error
 	Chroot(dir string) error
+	// ReadFile returns the contents of path; a missing file is an error
+	// matching fs.ErrNotExist.
+	ReadFile(path string) ([]byte, error)
 	// Exec replaces the current process image (execve); on success it does
 	// not return.
 	Exec(argv0 string, argv, envv []string) error
@@ -66,8 +82,18 @@ type System interface {
 //  2. loop-mount the SquashFS read-only at /sysroot;
 //  3. switch_root into /sysroot and exec the real /init.
 //
+// Before the pivot it reads the sign-time anchor, if any, and execs init
+// with it in AnchorEnv. Any inherited AnchorEnv is always dropped first:
+// the kernel turns command-line key=value words into init's environment,
+// and the command line is not trusted.
+//
 // On success Exec does not return; any return value is an error.
 func Run(sys System, env []string) error {
+	initEnv, err := anchorEnv(sys, env)
+	if err != nil {
+		return err
+	}
+
 	if err := sys.Mkdir("/dev", 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("switchroot: mkdir /dev: %w", err)
 	}
@@ -100,8 +126,32 @@ func Run(sys System, env []string) error {
 	if err := sys.Chdir("/"); err != nil {
 		return fmt.Errorf("switchroot: chdir /: %w", err)
 	}
-	if err := sys.Exec(InitPath, []string{InitPath}, env); err != nil {
+	if err := sys.Exec(InitPath, []string{InitPath}, initEnv); err != nil {
 		return fmt.Errorf("switchroot: exec %s: %w", InitPath, err)
 	}
 	return errors.New("switchroot: exec returned without error")
+}
+
+// anchorEnv returns env without any inherited AnchorEnv, plus AnchorEnv set
+// from AnchorPath when that file exists and is not empty.
+func anchorEnv(sys System, env []string) ([]string, error) {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if kv == AnchorEnv || strings.HasPrefix(kv, AnchorEnv+"=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+
+	der, err := sys.ReadFile(AnchorPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("switchroot: read %s: %w", AnchorPath, err)
+	}
+	if len(der) == 0 {
+		return out, nil
+	}
+	return append(out, AnchorEnv+"="+base64.StdEncoding.EncodeToString(der)), nil
 }

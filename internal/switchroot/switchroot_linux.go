@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 
 	"golang.org/x/sys/unix"
 )
@@ -46,6 +47,8 @@ func (linuxSystem) Mount(source, target, fstype string, flags uintptr, data stri
 func (linuxSystem) Chdir(dir string) error { return unix.Chdir(dir) }
 
 func (linuxSystem) Chroot(dir string) error { return unix.Chroot(dir) }
+
+func (linuxSystem) ReadFile(path string) ([]byte, error) { return os.ReadFile(path) }
 
 func (linuxSystem) Exec(argv0 string, argv, envv []string) error {
 	return unix.Exec(argv0, argv, envv)
