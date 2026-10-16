@@ -5,8 +5,9 @@ name: Full-image suite (QEMU Root and Intermediate)
 # test/integration/image_suite_test.go against them over the mTLS API:
 # ceremony, sign-subordinate, leaves, nginx with OCSP stapling, revocation,
 # the protocol switch, ACME with cert-manager in kind, EST, the RFC 3161 TSA
-# against a local chronyd, re-certify, escrow and the console reset. Each
-# step's result and the coverage the run reached go into the job summary.
+# against a local chronyd, re-certify, a re-key of the Intermediate, escrow
+# and the console reset. Each step's result and the coverage the run reached
+# go into the job summary.
 # See test/image/run.sh.
 #
 # Slow, so not on every pull request: nightly, on pull requests that touch

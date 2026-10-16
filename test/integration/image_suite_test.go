@@ -924,6 +924,8 @@ func TestImageSuite(t *testing.T) {
 		func(t *testing.T) { stepTSA(t, s, st) })
 	s.step("protocol switch: ACME off, reboot pending, reboot, cleared", []string{protoOn},
 		func(t *testing.T) { stepProtocolsOff(t, s, st) })
+	s.step("re-key the Intermediate: rotate-key, sign-subordinate on the Root, submit-rotation", []string{hier},
+		func(t *testing.T) { stepRekey(t, s, st) })
 	s.step("console reset over the serial line, on a throwaway node", []string{"escrow: import the Root backup onto a fresh node"},
 		func(t *testing.T) { stepConsoleReset(t, s, st) })
 
@@ -1582,6 +1584,139 @@ func stepUpgrade(t *testing.T, s *suite, st *suiteState, v *vm, cn string) {
 		verifyTo(t, leaf, st.rootCert, []*x509.Certificate{st.intCert}, "post-upgrade.cryptos.test", x509.ExtKeyUsageServerAuth)
 	}
 	note(t, "staged, activated, back on the successor with the same identity, and signing")
+}
+
+// stepRekey re-keys the Intermediate through the node's normal path: `ca
+// rotate-key` stages a new key and prints its CSR, the Root's `ca
+// sign-subordinate` signs it, and `ca submit-rotation` swaps the node to it.
+// The step is self-contained: it issues and revokes a leaf under the old key
+// first, then checks that the new certificate chains to the Root under a new
+// key, that a leaf issues under it, that the revocation made before the
+// re-key is still on the CRL (now signed by the new key) and over OCSP, and
+// that the audit chain still verifies.
+func stepRekey(t *testing.T, s *suite, st *suiteState) {
+	dir := filepath.Join(s.env.out, "rekey")
+	_ = os.MkdirAll(dir, 0o755)
+	before := st.intCert
+	issue := func(name string) *x509.Certificate {
+		t.Helper()
+		csr := filepath.Join(dir, name+".csr")
+		writeFile(t, csr, pemBlock("CERTIFICATE REQUEST", newCSR(t, p384(t), name+".cryptos.test")))
+		return parsePEMCerts(t, []byte(st.inter.mustCtl(t, "ca", "issue-leaf", "--csr", csr, "--profile", "tls-server", "--dns", name+".cryptos.test")))[0]
+	}
+
+	revoked := issue("before-rekey")
+	if err := revoked.CheckSignatureFrom(before); err != nil {
+		t.Fatalf("the leaf issued before the re-key is not signed by the current Intermediate: %v", err)
+	}
+	st.inter.mustCtl(t, "ca", "revoke", "--serial", revoked.SerialNumber.Text(16), "--reason", "1")
+
+	csrPath := filepath.Join(dir, "rotation.csr")
+	writeFile(t, csrPath, []byte(st.inter.mustCtl(t, "ca", "rotate-key")))
+	chainPath := filepath.Join(dir, "rotation-chain.pem")
+	writeFile(t, chainPath, []byte(st.root.mustCtl(t, "ca", "sign-subordinate", "--csr", csrPath, "--profile", "sub-ca")))
+	st.inter.mustCtl(t, "ca", "submit-rotation", "--chain", chainPath)
+
+	after := parsePEMCerts(t, []byte(st.inter.mustCtl(t, "identity", "show", "-o", "pem")))[0]
+	if bytes.Equal(after.RawSubjectPublicKeyInfo, before.RawSubjectPublicKeyInfo) {
+		t.Fatal("the Intermediate's key did not change across the re-key")
+	}
+	if after.SerialNumber.Cmp(before.SerialNumber) == 0 {
+		t.Fatal("the re-key kept the old certificate")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(st.rootCert)
+	if _, err := after.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		t.Fatalf("the re-keyed Intermediate does not verify to the Root: %v", err)
+	}
+	if !after.IsCA || after.MaxPathLen != 0 || !after.MaxPathLenZero {
+		t.Fatalf("re-keyed Intermediate: CA %t pathlen %d (zero %t), want a CA with pathlen 0", after.IsCA, after.MaxPathLen, after.MaxPathLenZero)
+	}
+	if status := st.inter.status(t); !strings.Contains(status, "Identity:        ESTABLISHED") {
+		t.Fatalf("after the re-key, the Intermediate is not ESTABLISHED:\n%s", status)
+	}
+	st.intCert = after
+	writeFile(t, filepath.Join(s.env.out, "intermediate.pem"), pemBlock("CERTIFICATE", after.Raw))
+
+	leaf := issue("after-rekey")
+	verifyTo(t, leaf, st.rootCert, []*x509.Certificate{after}, "after-rekey.cryptos.test", x509.ExtKeyUsageServerAuth)
+	if leaf.CheckSignatureFrom(before) == nil {
+		t.Fatal("the leaf issued after the re-key is signed by the old key")
+	}
+
+	if len(revoked.CRLDistributionPoints) == 0 || len(revoked.OCSPServer) == 0 {
+		t.Fatalf("the leaf carries no CRL distribution point or OCSP pointer (CDP %v, OCSP %v)", revoked.CRLDistributionPoints, revoked.OCSPServer)
+	}
+	resp, err := http.Get(revoked.CRLDistributionPoints[0])
+	if err != nil {
+		t.Fatalf("fetch the CRL: %v", err)
+	}
+	crlDER, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	crl, err := x509.ParseRevocationList(crlDER)
+	if err != nil {
+		t.Fatalf("parse the CRL: %v", err)
+	}
+	if err := crl.CheckSignatureFrom(after); err != nil {
+		t.Fatalf("the CRL after the re-key is not signed by the new key: %v", err)
+	}
+	listed := false
+	for _, rc := range crl.RevokedCertificateEntries {
+		if rc.SerialNumber.Cmp(revoked.SerialNumber) == 0 {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatalf("the CRL (%d entries) no longer lists %s, revoked before the re-key", len(crl.RevokedCertificateEntries), revoked.SerialNumber.Text(16))
+	}
+
+	// The request names the old key, the issuer of the revoked leaf. The
+	// response is checked against its embedded delegated responder
+	// certificate, which has to chain to the old or the new key.
+	responder := func(c *x509.Certificate, issuer *x509.Certificate) (*ocsp.Response, string) {
+		t.Helper()
+		req, err := ocsp.CreateRequest(c, issuer, &ocsp.RequestOptions{Hash: crypto.SHA256})
+		if err != nil {
+			t.Fatalf("OCSP request: %v", err)
+		}
+		resp, err := http.Post(c.OCSPServer[0], "application/ocsp-request", bytes.NewReader(req))
+		if err != nil {
+			t.Fatalf("OCSP POST %s: %v", c.OCSPServer[0], err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("OCSP: HTTP %d", resp.StatusCode)
+		}
+		r, err := ocsp.ParseResponseForCert(body, c, nil)
+		if err != nil {
+			t.Fatalf("OCSP for %s: parse and verify the response: %v", c.SerialNumber.Text(16), err)
+		}
+		switch {
+		case r.Certificate == nil:
+			t.Fatalf("OCSP for %s: the response carries no responder certificate", c.SerialNumber.Text(16))
+		case r.Certificate.CheckSignatureFrom(after) == nil:
+			return r, "new key"
+		case r.Certificate.CheckSignatureFrom(before) == nil:
+			return r, "old key"
+		}
+		t.Fatalf("OCSP for %s: the responder certificate chains to neither the old nor the new key", c.SerialNumber.Text(16))
+		return nil, ""
+	}
+	r, revokedSigner := responder(revoked, before)
+	if r.Status != ocsp.Revoked || r.RevocationReason != ocsp.KeyCompromise {
+		t.Fatalf("OCSP for the leaf revoked before the re-key: status %d reason %d, want revoked (keyCompromise)", r.Status, r.RevocationReason)
+	}
+	r, goodSigner := responder(leaf, after)
+	if r.Status != ocsp.Good {
+		t.Fatalf("OCSP for the leaf issued after the re-key: status %d, want good", r.Status)
+	}
+
+	if out := st.inter.mustCtl(t, "audit", "verify"); !strings.Contains(out, "audit chain intact") {
+		t.Fatalf("audit verify after the re-key:\n%s", out)
+	}
+	note(t, fmt.Sprintf("serial %s -> %s on a new key; leaf %s issues and chains to the Root; %s stays revoked on the CRL and over OCSP; OCSP responder from the %s (revoked) and the %s (new leaf); audit chain intact",
+		before.SerialNumber.Text(16), after.SerialNumber.Text(16), leaf.SerialNumber.Text(16), revoked.SerialNumber.Text(16), revokedSigner, goodSigner))
 }
 
 func stepEscrowExport(t *testing.T, s *suite, st *suiteState) {
