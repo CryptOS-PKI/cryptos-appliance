@@ -4,4 +4,4 @@ repos:
   cryptos-node:     {commit: cd78c62680ef144944d52e9f8656de334834958d}
   cryptos-manager:  {commit: cf1118bbf9ee86c9bbd5ac7e4377832c82980450}
   cryptos-web:      {commit: b02cae60de95231f5c88ba7a6606777f52f9a995}
-  docs:             {commit: 489a921849e4295c371a4edfc808d415491d786d}
+  docs:             {commit: 6b932c53606ce74cc19a2f7a4ffba7833762eddd}
