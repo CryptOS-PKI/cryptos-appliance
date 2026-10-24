@@ -1,7 +1,7 @@
 version: 1
 release: v0.1.0-rc.1
 repos:
-  cryptos-node:     {commit: 9ecfc83d595afdcea9c7cfe0dd8778adb63e78b8}
+  cryptos-node:     {commit: 4663543b859ba00ec166c0a31496f9b2c4e5db39}
   cryptos-manager:  {commit: cf1118bbf9ee86c9bbd5ac7e4377832c82980450}
   cryptos-web:      {commit: b02cae60de95231f5c88ba7a6606777f52f9a995}
   docs:             {commit: 489a921849e4295c371a4edfc808d415491d786d}
