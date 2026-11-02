@@ -52,3 +52,16 @@ func TestISORootYAMLStateKey(t *testing.T) {
 		t.Fatalf("the tpm config still names nodeid:\n%s", got)
 	}
 }
+
+// QEMU resolves a device's bus when it reads the -device, so a controller has
+// to come before the disk on it.
+func TestStorageArgsPutControllersFirst(t *testing.T) {
+	hw, err := isoHardware("proxmox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(hw.storageArgs(), " ")
+	if ctrl, disk := strings.Index(args, "virtio-scsi-pci"), strings.Index(args, "scsi-hd"); ctrl < 0 || disk < ctrl {
+		t.Fatalf("the controller must precede the disk: %s", args)
+	}
+}

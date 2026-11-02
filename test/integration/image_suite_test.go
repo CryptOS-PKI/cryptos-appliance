@@ -316,6 +316,16 @@ type vmHardware struct {
 	installDisk string
 }
 
+// storageArgs is the QEMU arguments for the controllers and the disk, in the
+// order QEMU needs them: a device's bus has to exist when it is read.
+func (hw vmHardware) storageArgs() []string {
+	var args []string
+	for _, c := range hw.controllers {
+		args = append(args, "-device", c)
+	}
+	return append(args, "-device", hw.disk)
+}
+
 // defaultHardware is what the full-image suite boots on.
 func defaultHardware() vmHardware {
 	return vmHardware{
@@ -388,13 +398,11 @@ func (v *vm) start(t *testing.T) time.Time {
 		"-drive", "if=pflash,format=raw,unit=0,readonly=on,file=" + e.ovmfCode,
 		"-drive", "if=pflash,format=raw,unit=1,file=" + v.vars,
 		"-drive", "if=none,id=disk,format=raw,file=" + v.disk,
-		"-device", hw.disk,
-		"-drive", "if=none,id=cover,format=raw,file=" + v.cover,
-		"-device", "virtio-blk-pci,drive=cover,serial=cryptos-cover",
 	}
-	for _, c := range hw.controllers {
-		args = append(args, "-device", c)
-	}
+	args = append(args, hw.storageArgs()...)
+	args = append(args,
+		"-drive", "if=none,id=cover,format=raw,file="+v.cover,
+		"-device", "virtio-blk-pci,drive=cover,serial=cryptos-cover")
 	if v.tap != "" {
 		args = append(args,
 			"-netdev", "tap,id=n0,ifname="+v.tap+",script=no,downscript=no",
