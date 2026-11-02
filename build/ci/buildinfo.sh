@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Print the -ldflags -X arguments that stamp a binary's build identity into
-# internal/buildinfo (version, commit, build date). Every Go build of a shipped
-# binary uses it, so the node image and cryptosctl built from one checkout
-# report the same identity (`cryptosctl status` / `cryptosctl version`):
+# internal/buildinfo (version, commit, build date), and the same version and
+# commit into github.com/Bugs5382/go-buildinfo, which cryptosctl reads its
+# version from once the cryptos-node pin carries that move. The linker ignores
+# -X for a package a binary doesn't link, so both sets are always passed.
+# Every Go build of a shipped binary uses it, so the node image and cryptosctl
+# built from one checkout report the same identity (`cryptosctl status` /
+# `cryptosctl version`):
 #
 #   go build -ldflags "-s -w $(build/ci/buildinfo.sh)" ./cmd/cryptosctl
 #
@@ -19,15 +23,16 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 pkg="github.com/CryptOS-PKI/cryptos-node/internal/buildinfo"
+lib="github.com/Bugs5382/go-buildinfo"
 
 version="${CRYPTOS_VERSION:-$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)}"
-flags="-X $pkg.Version=$version"
+flags="-X $pkg.Version=$version -X $lib.Version=$version"
 
 if commit="$(git -C "$root" rev-parse HEAD 2>/dev/null)"; then
   if ! git -C "$root" diff --quiet HEAD -- 2>/dev/null; then
     commit="$commit-dirty"
   fi
-  flags="$flags -X $pkg.Commit=$commit"
+  flags="$flags -X $pkg.Commit=$commit -X $lib.Commit=$commit"
 fi
 
 epoch="${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || true)}"
