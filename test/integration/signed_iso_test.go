@@ -34,7 +34,7 @@ limitations under the License.
 //
 // The test runs per platform, on that platform's virtual hardware and with
 // the state key the platform's images use. With tpm the state key is sealed in
-// a swtpm, as on a Proxmox host, and the upgrade step proves it unseals again
+// a swtpm, as on a Proxmox host or a server's TPM, and the upgrade step proves it unseals again
 // after the reseal.
 //
 // test/image/build-iso.sh builds and signs both ISOs; test/image/run-iso.sh
@@ -92,6 +92,16 @@ func isoHardware(platform string) (vmHardware, error) {
 		hw.controllers = []string{"virtio-scsi-pci,id=scsi0"}
 		hw.disk = "scsi-hd,drive=disk,bus=scsi0.0,bootindex=1"
 		hw.installDisk = "/dev/sda"
+		return hw, nil
+	case "baremetal":
+		// The closest QEMU gets to a server: an NVMe disk, an Intel NIC with
+		// no virtio on the data path, and the ISO on a USB CD-ROM behind
+		// xHCI, the way a BMC's virtual media presents it.
+		hw.controllers = []string{"qemu-xhci,id=xhci", "usb-bot,id=vmedia,bus=xhci.0"}
+		hw.disk = "nvme,drive=disk,serial=cryptos-nvme,bootindex=1"
+		hw.nic = "e1000e,netdev=n0"
+		hw.cd = "scsi-cd,drive=cd,bus=vmedia.0,bootindex=2"
+		hw.installDisk = "/dev/nvme0n1"
 		return hw, nil
 	}
 	return vmHardware{}, fmt.Errorf("signed-ISO test: no virtual hardware for platform %q", platform)

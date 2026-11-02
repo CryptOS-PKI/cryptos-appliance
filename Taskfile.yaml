@@ -156,7 +156,7 @@ tasks:
       - bash test/image/run-bridge.sh
 
   e2e:iso:
-    desc: "[Linux] Signed ISO (E2E_ISO_PLATFORM=vmware|proxmox, E2E_ISO_STATEKEY=nodeid|tpm): build two unsigned ISOs, sign them with cryptosctl image sign and a throwaway key, check both UKI copies, install a node from the first in QEMU and upgrade it to the second (needs KVM, qemu, OVMF, xorriso, mtools, sbsigntool, docker)"
+    desc: "[Linux] Signed ISO (E2E_ISO_PLATFORM=vmware|proxmox|baremetal, E2E_ISO_STATEKEY=nodeid|tpm): build two unsigned ISOs, sign them with cryptosctl image sign and a throwaway key, check both UKI copies, install a node from the first in QEMU and upgrade it to the second (needs KVM, qemu, OVMF, xorriso, mtools, sbsigntool, docker)"
     cmds:
       - bash test/image/build-iso.sh
       - bash test/image/run-iso.sh
