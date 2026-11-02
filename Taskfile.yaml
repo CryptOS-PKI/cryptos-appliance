@@ -124,6 +124,7 @@ tasks:
     desc: "Unit test the build and release helper scripts (git only; the ISO test skips without xorriso/mtools)"
     cmds:
       - bash build/ci/artifact-name_test.sh
+      - bash build/ci/buildinfo_test.sh
       - bash build/ci/build-manifest_test.sh
       - bash build/kernel/profiles_test.sh
       - bash build/release/assets_test.sh

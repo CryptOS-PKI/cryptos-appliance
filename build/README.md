@@ -89,7 +89,10 @@ EFI stub). See `.github/workflows/ci-image.yml` for the exact apt list.
 Every shipped binary (`init`, `cryptosctl`, `cryptos-console`, the
 switch-root shim, and the `task build` outputs) is stamped with the build's
 identity through `build/ci/buildinfo.sh`, which prints the `-ldflags -X`
-arguments for `internal/buildinfo`:
+arguments for `internal/buildinfo`. The version and commit also go to
+`github.com/Bugs5382/go-buildinfo`, which `cryptosctl` reads its version from
+in newer cryptos-node builds; the linker skips them in a binary that doesn't
+link that package:
 
 | Field | Source |
 |---|---|
