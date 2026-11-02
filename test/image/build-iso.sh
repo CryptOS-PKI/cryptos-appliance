@@ -15,13 +15,17 @@
 #                                             module go.mod pins
 #   versions.env                              each build's version string
 #
-# Each ISO is the release recipe (`task iso:unsigned`): the vmware kernel,
+# Each ISO is the release recipe (`task iso:unsigned`): the platform's kernel,
 # whose AHCI, CD-ROM and ISO 9660 drivers the installer needs to read the
-# ISO, a rootfs with no anchor (STATEKEY=nodeid, the variant my production
-# nodes run), and build/iso/build.sh with UNSIGNED=1. The one difference is
-# the UKI's qemu-dev command line instead of prod, so the test can read the
-# serial console. The key lives on /dev/shm and is shredded before this
-# script returns; nothing it signs is published or cached.
+# ISO, a rootfs with no anchor, and build/iso/build.sh with UNSIGNED=1. The one
+# difference is the UKI's qemu-dev command line instead of prod, so the test
+# can read the serial console. The key lives on /dev/shm and is shredded before
+# this script returns; nothing it signs is published or cached.
+#
+# Environment:
+#   E2E_ISO_PLATFORM  the platform to build (default vmware)
+#   E2E_ISO_STATEKEY  tpm or nodeid (default nodeid, the variant my production
+#                     nodes run)
 #
 # Output in build/out/iso-signed. Linux only. Needs the image toolchain
 # (build/README.md) plus xorriso, mtools and mkfs.vfat, and docker for the
@@ -31,7 +35,10 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 arch=amd64
-platform=vmware
+platform="${E2E_ISO_PLATFORM:-vmware}"
+statekey="${E2E_ISO_STATEKEY:-nodeid}"
+suffix=""
+[ "$statekey" = nodeid ] && suffix="-nodeid"
 out="$root/build/out"
 dest="$out/iso-signed"
 
@@ -53,7 +60,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "kernel with the $platform drivers (reuses build/.work/kernel when it is there)"
+log "$platform $statekey: kernel with the $platform drivers (reuses build/.work/kernel when it is there)"
 PLATFORM="$platform" bash build/kernel/build.sh "$arch"
 for tool in cryptsetup:cryptsetup e2fsprogs:mke2fs gptfdisk:sgdisk dosfstools:mkfs.vfat; do
   dir="${tool%%:*}" bin="${tool##*:}"
@@ -81,14 +88,14 @@ base_version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 for name in first next; do
   ver="$base_version-iso-$name"
   log "unsigned ISO $ver (the release recipe)"
-  CRYPTOS_VERSION="$ver" SB_CERT='' STATEKEY=nodeid bash build/squashfs/build.sh "$arch"
+  CRYPTOS_VERSION="$ver" SB_CERT='' STATEKEY="$statekey" bash build/squashfs/build.sh "$arch"
   if grep -q -a -E 'MII[A-Za-z0-9+/]{400,}' "$root/build/.work/rootfs-$arch/init"; then
     log "the unsigned $name build carries a build-time anchor"
     exit 1
   fi
   CRYPTOS_VERSION="$ver" bash build/uki/assemble.sh "$arch" qemu-dev
-  UNSIGNED=1 PLATFORM="$platform" STATEKEY=nodeid bash build/iso/build.sh "$arch"
-  iso_name="cryptos-$arch-$platform-nodeid-unsigned-$build_tag.iso"
+  UNSIGNED=1 PLATFORM="$platform" STATEKEY="$statekey" bash build/iso/build.sh "$arch"
+  iso_name="cryptos-$arch-$platform$suffix-unsigned-$build_tag.iso"
   mkdir -p "$dest/$name"
   cp "$out/$iso_name" "$dest/$name/$iso_name"
 
@@ -96,7 +103,7 @@ for name in first next; do
   # ISO with the default output names, then check the UKI written beside it.
   "$dest/cryptosctl" image sign --image "$dest/$name/$iso_name" \
     --key "$keydir/sb.key" --cert "$keydir/sb.crt"
-  signed="$dest/$name/cryptos-$arch-$platform-nodeid-$build_tag"
+  signed="$dest/$name/cryptos-$arch-$platform$suffix-$build_tag"
   for f in "$signed.iso" "$signed.uki" "$signed.uki.sig"; do
     [ -f "$f" ] || { log "cryptosctl image sign did not write $f"; exit 1; }
   done
@@ -106,6 +113,8 @@ done
 
 cat >"$dest/versions.env" <<EOF
 E2E_ISO_BUILD_TAG=$build_tag
+E2E_ISO_PLATFORM=$platform
+E2E_ISO_STATEKEY=$statekey
 E2E_ISO_VERSION=$base_version-iso-first
 E2E_ISO_NEXT_VERSION=$base_version-iso-next
 EOF

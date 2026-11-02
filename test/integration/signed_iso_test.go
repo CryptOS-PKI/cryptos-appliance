@@ -32,6 +32,11 @@ limitations under the License.
 // maintenance API on the link-local address the node gives itself
 // (cryptos-node#381).
 //
+// The test runs per platform, on that platform's virtual hardware and with
+// the state key the platform's images use. With tpm the state key is sealed in
+// a swtpm, as on a Proxmox host, and the upgrade step proves it unseals again
+// after the reseal.
+//
 // test/image/build-iso.sh builds and signs both ISOs; test/image/run-iso.sh
 // sets the variables below. Without CRYPTOS_E2E_ISO=1 the test skips.
 
@@ -59,8 +64,6 @@ const (
 	// That is where the node booted from the ISO serves the maintenance API,
 	// before it has the static address its config gives it.
 	isoMaintAddr = "10.0.0.15"
-	// The VM's first virtio disk.
-	isoInstallDisk = "/dev/vda"
 	// isoLinkLocalMAC is the NIC address of the VM on the link with no DHCP
 	// server, so the link-local address the node derives from it is known.
 	isoLinkLocalMAC = "52:54:00:4c:4c:01"
@@ -73,6 +76,30 @@ type isoEnv struct {
 	// tap is a host tap device on a link with no DHCP server, with a
 	// 169.254.0.0/16 address on the host side; empty skips that step.
 	tap string
+	// platform names the virtual hardware; statekey is tpm or nodeid.
+	platform, statekey string
+}
+
+// isoHardware returns the devices the signed ISO boots on for a platform.
+func isoHardware(platform string) (vmHardware, error) {
+	hw := defaultHardware()
+	switch platform {
+	case "vmware":
+		return hw, nil
+	case "proxmox":
+		// A new Proxmox VM on q35 and OVMF: VirtIO SCSI, a VirtIO NIC and an
+		// IDE CD-ROM, which q35 puts on its AHCI controller.
+		hw.controllers = []string{"virtio-scsi-pci,id=scsi0"}
+		hw.disk = "scsi-hd,drive=disk,bus=scsi0.0,bootindex=1"
+		hw.installDisk = "/dev/sda"
+		return hw, nil
+	}
+	return vmHardware{}, fmt.Errorf("signed-ISO test: no virtual hardware for platform %q", platform)
+}
+
+// isoRootYAML is the Root's machine config for a state-key mode.
+func isoRootYAML(adminPEM, name, statekey string) string {
+	return strings.Replace(rootYAML(adminPEM, name), "state_key: {mode: nodeid}", "state_key: {mode: "+statekey+"}", 1)
 }
 
 func loadISOEnv(t *testing.T) isoEnv {
@@ -98,6 +125,9 @@ func loadISOEnv(t *testing.T) isoEnv {
 		ver:     get("E2E_ISO_VERSION"),
 		nextVer: get("E2E_ISO_NEXT_VERSION"),
 		tap:     get("E2E_ISO_TAP"),
+
+		platform: firstNonEmpty(get("E2E_ISO_PLATFORM"), "vmware"),
+		statekey: firstNonEmpty(get("E2E_ISO_STATEKEY"), "nodeid"),
 	}
 	for k, v := range map[string]string{
 		"OVMF_CODE": e.suite.ovmfCode, "OVMF_VARS": e.suite.ovmfVars, "E2E_IMAGE_OUT": e.suite.out,
@@ -113,6 +143,7 @@ func loadISOEnv(t *testing.T) isoEnv {
 
 type isoState struct {
 	env      isoEnv
+	hw       vmHardware
 	admin    admin
 	adminPEM string
 	node     *vm
@@ -120,21 +151,27 @@ type isoState struct {
 
 func TestSignedISO(t *testing.T) {
 	ie := loadISOEnv(t)
-	s := &suite{t: t, env: ie.suite, passed: map[string]bool{}, title: "Signed ISO (cryptosctl image sign on an unsigned ISO, install from it, upgrade)"}
+	s := &suite{t: t, env: ie.suite, passed: map[string]bool{}, title: "Signed ISO on " + ie.platform + " (cryptosctl image sign on an unsigned ISO, install from it, upgrade)"}
 	t.Cleanup(s.writeSummary)
+
+	hw, err := isoHardware(ie.platform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("signed ISO: platform %s, state key %s, install disk %s", ie.platform, ie.statekey, hw.installDisk)
 
 	certPEM, adminKeyPEM, _ := generateBootstrapAdmin(t)
 	a := admin{cert: filepath.Join(ie.suite.out, "admin.crt"), key: filepath.Join(ie.suite.out, "admin.key")}
 	writeFile(t, a.cert, certPEM)
 	writeFile(t, a.key, adminKeyPEM)
-	st := &isoState{env: ie, admin: a, adminPEM: string(certPEM)}
+	st := &isoState{env: ie, hw: hw, admin: a, adminPEM: string(certPEM)}
 
 	const (
 		verify  = "signed ISO: the EFI boot image's BOOTX64.EFI and /cryptos.uki are the signed UKI, sbverify --cert passes on both, the .sig verifies"
-		install = "signed ISO: boots on a blank disk, installs a nodeid Root over the maintenance API, the disk boots the signed UKI and serves image upgrades"
 		upgrade = "signed ISO: a second ISO's UKI, signed with the same key, stages, activates and boots"
 		noDHCP  = "signed ISO: on a link with no DHCP server, the node booted from the ISO serves the maintenance API on its self-assigned link-local address"
 	)
+	install := "signed ISO: boots on a blank disk, installs a " + ie.statekey + " Root over the maintenance API, the disk boots the signed UKI and serves image upgrades"
 	s.step(verify, nil, func(t *testing.T) { isoStepVerify(t, st) })
 	s.step(install, []string{verify}, func(t *testing.T) { isoStepInstall(t, s, st) })
 	s.step(upgrade, []string{install}, func(t *testing.T) { isoStepUpgrade(t, st) })
@@ -174,7 +211,7 @@ func isoStepLinkLocal(t *testing.T, s *suite, st *isoState) {
 	}
 	v := &vm{
 		s: s, name: "iso-linklocal", dir: dir, uuid: "564d0007-0000-0000-0000-00000000e2e7",
-		tap: st.env.tap, mac: isoLinkLocalMAC, admin: st.admin, iso: st.env.iso,
+		tap: st.env.tap, mac: isoLinkLocalMAC, admin: st.admin, iso: st.env.iso, hw: &st.hw,
 	}
 	v.disk = filepath.Join(dir, "disk.img")
 	v.cover = filepath.Join(dir, "cover.img")
@@ -272,15 +309,15 @@ func isoStepInstall(t *testing.T, s *suite, st *isoState) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("vm dir: %v", err)
 	}
-	cfg := rootYAML(st.adminPEM, "e2e-iso")
+	cfg := isoRootYAML(st.adminPEM, "e2e-iso", st.env.statekey)
 	writeFile(t, filepath.Join(dir, "machine.yaml"), []byte(cfg))
 	installCfg := filepath.Join(dir, "install.yaml")
-	writeFile(t, installCfg, []byte(cfg+"install:\n  disk: "+isoInstallDisk+"\n"))
+	writeFile(t, installCfg, []byte(cfg+"install:\n  disk: "+st.hw.installDisk+"\n"))
 
 	v := &vm{
 		s: s, name: "iso", dir: dir, uuid: "564d0006-0000-0000-0000-00000000e2e6", mgmtPort: isoMgmtPort,
 		forwards: []string{"hostfwd=tcp:127.0.0.1:" + isoMaintPort + "-" + isoMaintAddr + ":443"},
-		admin:    st.admin, iso: st.env.iso,
+		admin:    st.admin, iso: st.env.iso, hw: &st.hw, withTPM: st.env.statekey == "tpm",
 	}
 	v.disk = filepath.Join(dir, "disk.img")
 	v.cover = filepath.Join(dir, "cover.img")
