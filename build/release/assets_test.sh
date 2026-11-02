@@ -57,8 +57,10 @@ check() {
 
 run >/dev/null 2>&1 || { echo "FAIL assets.sh exited non-zero"; fail=1; }
 check "builds each variant once" "$(tr '\n' ';' <"$repo/calls" 2>/dev/null || true)" \
-  "vmware tpm;vmware nodeid;proxmox tpm;"
-want="cryptos-amd64-proxmox-unsigned-v0.0.0-0-gabc1234.iso
+  "vmware tpm;vmware nodeid;proxmox tpm;baremetal tpm;"
+want="cryptos-amd64-baremetal-unsigned-v0.0.0-0-gabc1234.iso
+cryptos-amd64-baremetal-v0.0.0-0-gabc1234.uki.unsigned
+cryptos-amd64-proxmox-unsigned-v0.0.0-0-gabc1234.iso
 cryptos-amd64-proxmox-v0.0.0-0-gabc1234.uki.unsigned
 cryptos-amd64-vmware-nodeid-unsigned-v0.0.0-0-gabc1234.iso
 cryptos-amd64-vmware-nodeid-v0.0.0-0-gabc1234.uki.unsigned

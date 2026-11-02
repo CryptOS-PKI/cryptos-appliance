@@ -44,9 +44,9 @@ name: Full-image suite (QEMU Root and Intermediate)
 # (test/image/build-iso.sh, test/image/run-iso.sh). It then boots the ISO
 # again on a tap link with no DHCP server and reaches the maintenance API on
 # the link-local address the node gives itself. It also runs beside the
-# others. It runs once per platform: VMware with the nodeid state key, and
-# Proxmox on Proxmox's default virtual hardware with the state key sealed in
-# swtpm.
+# others. It runs once per platform: VMware with the nodeid state key, Proxmox
+# on Proxmox's default virtual hardware, and bare metal on an NVMe disk, an
+# Intel NIC and a USB CD-ROM. Both of those seal the state key in swtpm.
 #
 # release.yml also calls this workflow (workflow_call) on every release
 # rehearsal and tag, on the same commit: the suite is the release's proof
@@ -382,6 +382,8 @@ jobs:
           - platform: vmware
             statekey: nodeid
           - platform: proxmox
+            statekey: tpm
+          - platform: baremetal
             statekey: tpm
     steps:
       - name: Checkout

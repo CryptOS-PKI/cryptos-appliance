@@ -444,6 +444,8 @@ Secure Boot variables set, and attaches to the tag's release:
 | `cryptos-amd64-vmware[-nodeid]-unsigned-<build>.iso` | the installer ISO around it |
 | `cryptos-amd64-proxmox-<build>.uki.unsigned` | the unsigned UKI for Proxmox VE (`tpm` only) |
 | `cryptos-amd64-proxmox-unsigned-<build>.iso` | the installer ISO around it |
+| `cryptos-amd64-baremetal-<build>.uki.unsigned` | the unsigned UKI for physical servers (`tpm` only) |
+| `cryptos-amd64-baremetal-unsigned-<build>.iso` | the installer ISO around it |
 | `cryptosctl-<os>-<arch>-<build>` | `cryptosctl` for linux and darwin on amd64 and arm64 |
 | `build-manifest.json` | the commit, build tag and file names |
 | `SHA256SUMS` | the SHA-256 of every other file |

@@ -29,6 +29,7 @@ func TestISOHardware(t *testing.T) {
 	}{
 		{"vmware", "virtio-blk-pci,drive=disk,bootindex=1", "/dev/vda", "virtio-net-pci,netdev=n0"},
 		{"proxmox", "scsi-hd,drive=disk,bus=scsi0.0,bootindex=1", "/dev/sda", "virtio-net-pci,netdev=n0"},
+		{"baremetal", "nvme,drive=disk,serial=cryptos-nvme,bootindex=1", "/dev/nvme0n1", "e1000e,netdev=n0"},
 	}
 	for _, c := range cases {
 		t.Run(c.platform, func(t *testing.T) {
