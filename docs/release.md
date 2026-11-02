@@ -50,7 +50,7 @@ guard -> services -> reproducibility -> e2e -> assets
 | `services` | hosted | builds the FleetOS Manager image from the pinned `cryptos-manager` and `cryptos-web` commits and runs it read-only with its health check, builds the web console and runs its release-bundle check, and lints `chart/fleet-manager`; pushes nothing |
 | `reproducibility` | hosted | `task release:reproducible`: builds the unsigned image twice from the same commit in separate workspaces and compares every output byte for byte |
 | `e2e` | hosted | calls `ci-e2e-image.yml`, the QEMU full-image suite, on this commit: boots the real image (OVMF, with a software TPM) as a Root and an Intermediate and drives every step over the mTLS API, and in its bridge job upgrades a node on the bridge build (a77ae5b) to this commit; the run's job summary shows both step tables |
-| `assets` | hosted, tag only | refuses to run if the suite skipped, then builds the unsigned ISOs and UKIs (`tpm` and `nodeid`) and `cryptosctl`, checks nothing is signed, and attaches them with `SHA256SUMS` and `build-manifest.json` to the tag's release |
+| `assets` | hosted, tag only | refuses to run if the suite skipped, then builds the unsigned ISOs and UKIs (every variant in `build/release/assets.sh`) and `cryptosctl`, checks nothing is signed, and attaches them with `SHA256SUMS` and `build-manifest.json` to the tag's release |
 
 `guard` runs on both entry points. On a rehearsal dispatch it only proves the pins are internally
 consistent, since the other repos' tags do not exist yet to check against. It also prints each

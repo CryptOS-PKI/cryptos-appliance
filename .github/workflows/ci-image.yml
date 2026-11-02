@@ -141,11 +141,12 @@ jobs:
     name: Build the unsigned release assets
     if: ${{ inputs.release_assets }}
     runs-on: ${{ (github.event.inputs.arch == 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    timeout-minutes: 90
+    # Each variant in build/release/assets.sh is a kernel, static tools, rootfs
+    # and ISO build of its own.
+    timeout-minutes: 150
     env:
       ARCH: ${{ github.event.inputs.arch || 'amd64' }}
       # The platform/statekey variants published for each release.
-      PLATFORM: vmware
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -187,39 +188,10 @@ jobs:
             exit 1
           fi
 
-      # One kernel build (PLATFORM=vmware) serves both variants; each variant
-      # gets its own rootfs, UKI and ISO. The UKI is copied out under a variant
-      # name before the next build overwrites build/out/cryptos-<arch>.uki.unsigned.
+      # Every platform and state-key variant the release ships, each checked
+      # for an upgrade anchor and a signature. See build/release/assets.sh.
       - name: Build the unsigned images
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          # The build-number tag every artifact file name carries; the ISO
-          # already has it baked in by build/iso/build.sh, so this just
-          # reconstructs the same name to copy from and names the UKI copy.
-          build_tag="$(bash build/ci/artifact-name.sh)"
-          for statekey in tpm nodeid; do
-            suffix=""
-            [ "$statekey" = nodeid ] && suffix="-nodeid"
-            task iso:unsigned ARCH="$ARCH" PLATFORM="$PLATFORM" STATEKEY="$statekey"
-
-            # No upgrade anchor: the stamped anchor is a base64 X.509 DER
-            # string in /init; build-image proves this pattern finds one.
-            init="build/.work/rootfs-${ARCH}/init"
-            if grep -q -a -E 'MII[A-Za-z0-9+/]{400,}' "$init"; then
-              echo "release build of $statekey carries an upgrade anchor" >&2
-              exit 1
-            fi
-            # No Authenticode signature on the UKI.
-            uki="build/out/cryptos-${ARCH}.uki.unsigned"
-            if sbverify --list "$uki" 2>&1 | grep -q 'signature 1'; then
-              echo "release UKI of $statekey carries a signature" >&2
-              exit 1
-            fi
-
-            cp "$uki" "dist/cryptos-${ARCH}-${PLATFORM}${suffix}-${build_tag}.uki.unsigned"
-            cp "build/out/cryptos-${ARCH}-${PLATFORM}${suffix}-unsigned-${build_tag}.iso" dist/
-          done
+        run: bash build/release/assets.sh
 
       # cryptosctl for operator workstations, stamped with the same build
       # identity as the image (build/ci/buildinfo.sh) and the same build-number
