@@ -188,7 +188,7 @@ unchanged, so builds with no `PLATFORM` behave as before.
 |---|---|---|
 | `vmware` | `profiles/vmware.config` | NVMe, AHCI, PVSCSI, e1000e and vmxnet3 |
 | `proxmox` | `profiles/proxmox.config` | VirtIO SCSI, VirtIO Block, NVMe, AHCI, e1000, e1000e, the virtio-serial channel and VirtIO RNG |
-| `baremetal` | `profiles/baremetal.config` | NVMe, AHCI, LSI and MegaRAID, HPE Smart Array, Adaptec, USB, and Intel, Broadcom, Mellanox and Realtek NICs; no guest drivers beyond the base |
+| `baremetal` | `profiles/baremetal.config` | NVMe, AHCI, LSI and MegaRAID, HPE Smart Array, Adaptec, USB, and Intel, Broadcom, Mellanox and Realtek NICs, every CPU (SMP up to 512, with x2APIC and the Intel and AMD IOMMUs); no guest drivers beyond the base |
 
     task iso PLATFORM=vmware        # -> build/out/cryptos-amd64-vmware-<build>.iso
 
@@ -201,8 +201,8 @@ Proxmox always offers a vTPM and a server has its own TPM, so neither has a
 one.
 
 The ISO is the Proxmox install medium: it goes straight into Proxmox ISO storage,
-and `cryptosctl image sign` signs it. The kernel has the virtio-serial channel the
-QEMU guest agent uses, but no agent runs in the image yet, so leave the VM's
+and `cryptosctl image sign` signs it. Every kernel, the base included, has the
+virtio-serial channel the QEMU guest agent uses, but no agent runs in the image yet, so leave the VM's
 **QEMU Guest Agent** option off.
 
 Boot the `baremetal` ISO from a BMC's virtual media or an optical drive: the kernel

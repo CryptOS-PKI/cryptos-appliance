@@ -45,7 +45,21 @@ want proxmox SCSI SCSI_VIRTIO BLK_DEV_SD BLK_DEV_NVME SATA_AHCI ATA_PIIX \
 want baremetal PCI_MSI BLK_DEV_NVME SATA_AHCI BLK_DEV_SD SCSI_MPT3SAS \
   MEGARAID_SAS SCSI_SMARTPQI SCSI_HPSA SCSI_AACRAID BLK_DEV_SR ISO9660_FS \
   USB_XHCI_HCD USB_EHCI_HCD USB_STORAGE USB_UAS USB_HID E1000E IGB IGC IXGBE \
-  I40E ICE TIGON3 BNXT MLX4_EN MLX5_CORE_EN R8169
+  I40E ICE TIGON3 BNXT MLX4_EN MLX5_CORE_EN R8169 SMP X86_X2APIC IRQ_REMAP \
+  INTEL_IOMMU AMD_IOMMU
+
+# Servers have many CPUs: the profile sets a CPU count, not the default.
+if ! grep -qE '^CONFIG_NR_CPUS=[0-9]+$' "$profiles/baremetal.config" 2>/dev/null; then
+  echo "FAIL baremetal: CONFIG_NR_CPUS is not set"
+  fail=1
+fi
+
+# The base runs the QEMU guest agent on its virtio-serial port, so every
+# image the e2e suite boots carries the virtio console.
+if ! grep -q '^CONFIG_VIRTIO_CONSOLE=y$' "$here/cryptos.config"; then
+  echo "FAIL base: CONFIG_VIRTIO_CONSOLE=y is missing"
+  fail=1
+fi
 
 # A physical server gets no hypervisor drivers on top of the base.
 for opt in VMWARE_PVSCSI VMXNET3 SCSI_VIRTIO VIRTIO_CONSOLE HW_RANDOM_VIRTIO; do
