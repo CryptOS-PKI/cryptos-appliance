@@ -230,10 +230,12 @@ jobs:
           set -euo pipefail
           ldflags="-s -w $(bash build/ci/buildinfo.sh)"
           build_tag="$(bash build/ci/artifact-name.sh)"
-          for os in linux darwin; do
+          for os in linux darwin windows; do
+            suffix=""
+            if [ "$os" = windows ]; then suffix=".exe"; fi
             for cpu in amd64 arm64; do
               CGO_ENABLED=0 GOOS="$os" GOARCH="$cpu" go build -trimpath \
-                -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}-${build_tag}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
+                -ldflags "$ldflags" -o "dist/cryptosctl-${os}-${cpu}-${build_tag}${suffix}" github.com/CryptOS-PKI/cryptos-node/cmd/cryptosctl
             done
           done
 
