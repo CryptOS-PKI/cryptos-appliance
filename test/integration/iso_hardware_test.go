@@ -66,3 +66,25 @@ func TestStorageArgsPutControllersFirst(t *testing.T) {
 		t.Fatalf("the controller must precede the disk: %s", args)
 	}
 }
+
+func TestBootedCPUs(t *testing.T) {
+	cases := []struct {
+		name, log string
+		want      int
+		ok        bool
+	}{
+		{"one node", "[    0.081234] smp: Bringing up secondary CPUs ...\n[    0.090000] smp: Brought up 1 node, 2 CPUs\n", 2, true},
+		{"one CPU", "smp: Brought up 1 node, 1 CPU\n", 1, true},
+		{"numa", "smp: Brought up 2 nodes, 64 CPUs\n", 64, true},
+		{"last boot wins", "smp: Brought up 1 node, 1 CPU\nreboot\nsmp: Brought up 1 node, 2 CPUs\n", 2, true},
+		{"uniprocessor kernel", "Linux version 6.12.94\nRun /init as init process\n", 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := bootedCPUs(c.log)
+			if got != c.want || ok != c.ok {
+				t.Fatalf("bootedCPUs = %d, %v; want %d, %v", got, ok, c.want, c.ok)
+			}
+		})
+	}
+}

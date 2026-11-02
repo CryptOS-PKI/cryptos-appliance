@@ -63,6 +63,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -271,6 +272,9 @@ func (s *suite) timing(format string, args ...any) {
 
 // ---- VMs --------------------------------------------------------------------
 
+// vmCPUs is how many CPUs QEMU gives every node it starts.
+const vmCPUs = 2
+
 // vm is one booted CryptOS node: its disk, TPM, serial line and forwards.
 type vm struct {
 	s        *suite
@@ -392,7 +396,7 @@ func (v *vm) start(t *testing.T) time.Time {
 		hw = *v.hw
 	}
 	args := []string{
-		"-machine", "q35,accel=" + e.accel, "-smp", "2", "-m", "2048",
+		"-machine", "q35,accel=" + e.accel, "-smp", strconv.Itoa(vmCPUs), "-m", "2048",
 		"-uuid", v.uuid,
 		"-display", "none", "-monitor", "none", "-serial", "stdio",
 		"-drive", "if=pflash,format=raw,unit=0,readonly=on,file=" + e.ovmfCode,

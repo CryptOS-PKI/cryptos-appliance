@@ -52,6 +52,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +186,10 @@ func TestSignedISO(t *testing.T) {
 	install := "signed ISO: boots on a blank disk, installs a " + ie.statekey + " Root over the maintenance API, the disk boots the signed UKI and serves image upgrades"
 	s.step(verify, nil, func(t *testing.T) { isoStepVerify(t, st) })
 	s.step(install, []string{verify}, func(t *testing.T) { isoStepInstall(t, s, st) })
+	if ie.platform == "baremetal" {
+		smp := "signed ISO: the bare-metal kernel brings up all " + strconv.Itoa(vmCPUs) + " CPUs QEMU gives it"
+		s.step(smp, []string{install}, func(t *testing.T) { isoStepSMP(t, st) })
+	}
 	s.step(upgrade, []string{install}, func(t *testing.T) { isoStepUpgrade(t, st) })
 
 	if st.node != nil {
@@ -382,6 +388,39 @@ func isoStepInstall(t *testing.T, s *suite, st *isoState) {
 		t.Fatalf("the installed node does not run the signed UKI from the ISO (sha256 %x):\n%s", sum, status)
 	}
 	note(t, "installed "+st.env.ver+" from the signed ISO; the disk runs the signed UKI and image status answers")
+}
+
+// smpLine is the line the kernel logs once it has started its CPUs. A
+// uniprocessor kernel never logs it.
+var smpLine = regexp.MustCompile(`smp: Brought up \d+ nodes?, (\d+) CPUs?`)
+
+// bootedCPUs returns the CPU count from the last boot in a serial log, and
+// false when no boot in it brought up CPUs as an SMP kernel.
+func bootedCPUs(log string) (int, bool) {
+	m := smpLine.FindAllStringSubmatch(log, -1)
+	if len(m) == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[len(m)-1][1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// isoStepSMP reads the kernel log of the installed node off its serial line:
+// the bare-metal kernel is SMP, so it has to bring up every CPU of the VM.
+func isoStepSMP(t *testing.T, st *isoState) {
+	log := st.node.serial.String()
+	n, ok := bootedCPUs(log)
+	if !ok {
+		t.Fatalf("the kernel never logged its CPUs coming up (a uniprocessor kernel?):\n%s", lastLines(log, 40))
+	}
+	t.Logf("kernel brought up %d CPUs, the VM has %d", n, vmCPUs)
+	if n != vmCPUs {
+		t.Fatalf("the kernel brought up %d CPUs, the VM has %d:\n%s", n, vmCPUs, lastLines(log, 40))
+	}
+	note(t, "the bare-metal kernel runs on all "+strconv.Itoa(vmCPUs)+" CPUs")
 }
 
 // isoStepUpgrade stages the UKI that `image sign` wrote beside the second
