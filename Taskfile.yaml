@@ -124,7 +124,10 @@ tasks:
     desc: "Unit test the build and release helper scripts (git only; the ISO test skips without xorriso/mtools)"
     cmds:
       - bash build/ci/artifact-name_test.sh
+      - bash build/ci/buildinfo_test.sh
       - bash build/ci/build-manifest_test.sh
+      - bash build/kernel/profiles_test.sh
+      - bash build/release/assets_test.sh
       - bash build/release/check-unsigned_test.sh
       - bash build/release/guard_test.sh
       - bash build/release/pin_test.sh
@@ -154,7 +157,7 @@ tasks:
       - bash test/image/run-bridge.sh
 
   e2e:iso:
-    desc: "[Linux] Signed ISO: build two unsigned ISOs, sign them with cryptosctl image sign and a throwaway key, check both UKI copies, install a node from the first in QEMU and upgrade it to the second (needs KVM, qemu, OVMF, xorriso, mtools, sbsigntool, docker)"
+    desc: "[Linux] Signed ISO (E2E_ISO_PLATFORM=vmware|proxmox|baremetal, E2E_ISO_STATEKEY=nodeid|tpm): build two unsigned ISOs, sign them with cryptosctl image sign and a throwaway key, check both UKI copies, install a node from the first in QEMU and upgrade it to the second (needs KVM, qemu, OVMF, xorriso, mtools, sbsigntool, docker)"
     cmds:
       - bash test/image/build-iso.sh
       - bash test/image/run-iso.sh

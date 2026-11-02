@@ -435,13 +435,17 @@ task iso:unsigned PLATFORM=vmware STATEKEY=nodeid
 | `cryptos-amd64-vmware-nodeid-unsigned-<build>.iso` | the installer ISO around it (`-nodeid` is omitted for `STATEKEY=tpm`; `<build>` is the git-describe build tag from `build/ci/artifact-name.sh`) |
 
 This is the recipe behind the release assets. On a `v*` tag, CI runs
-`task iso:unsigned` for `STATEKEY=tpm` and `STATEKEY=nodeid` with no Secure
-Boot variables set, and attaches to the tag's release:
+`task iso:unsigned` for each variant in `build/release/assets.sh` with no
+Secure Boot variables set, and attaches to the tag's release:
 
 | Release file | What it is |
 |---|---|
 | `cryptos-amd64-vmware[-nodeid]-<build>.uki.unsigned` | the unsigned UKI for each state-key mode |
 | `cryptos-amd64-vmware[-nodeid]-unsigned-<build>.iso` | the installer ISO around it |
+| `cryptos-amd64-proxmox-<build>.uki.unsigned` | the unsigned UKI for Proxmox VE (`tpm` only) |
+| `cryptos-amd64-proxmox-unsigned-<build>.iso` | the installer ISO around it |
+| `cryptos-amd64-baremetal-<build>.uki.unsigned` | the unsigned UKI for physical servers (`tpm` only) |
+| `cryptos-amd64-baremetal-unsigned-<build>.iso` | the installer ISO around it |
 | `cryptosctl-<os>-<arch>-<build>` | `cryptosctl` for linux and darwin on amd64 and arm64 |
 | `build-manifest.json` | the commit, build tag and file names |
 | `SHA256SUMS` | the SHA-256 of every other file |
