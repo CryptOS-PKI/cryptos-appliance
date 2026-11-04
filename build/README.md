@@ -196,26 +196,27 @@ unchanged, so builds with no `PLATFORM` behave as before.
 |---|---|---|
 | `vmware` | `profiles/vmware.config` | NVMe, AHCI, PVSCSI, e1000e and vmxnet3 |
 | `proxmox` | `profiles/proxmox.config` | VirtIO SCSI, VirtIO Block, NVMe, AHCI, e1000, e1000e, the virtio-serial channel and VirtIO RNG |
-| `baremetal` | `profiles/baremetal.config` | NVMe, AHCI, LSI and MegaRAID, HPE Smart Array, Adaptec, USB, and Intel, Broadcom, Mellanox and Realtek NICs, every CPU (SMP up to 512, with x2APIC and the Intel and AMD IOMMUs); no guest drivers beyond the base |
+| `baremetal` | `profiles/baremetal.config` | Not supported in v0.1.0 and not a release asset; the profile still builds and CI still boots it. NVMe, AHCI, LSI and MegaRAID, HPE Smart Array, Adaptec, USB, and Intel, Broadcom, Mellanox and Realtek NICs, every CPU (SMP up to 512, with x2APIC and the Intel and AMD IOMMUs); no guest drivers beyond the base |
 
     task iso PLATFORM=vmware        # -> build/out/cryptos-amd64-vmware-<build>.iso
 
     task iso:unsigned PLATFORM=proxmox   # -> build/out/cryptos-amd64-proxmox-unsigned-<build>.iso
 
 `build/release/assets.sh` lists the platform and state-key variants a release
-ships: `vmware` with `tpm` and `nodeid`, and `proxmox` and `baremetal` with `tpm`.
-Proxmox always offers a vTPM and a server has its own TPM, so neither has a
-`nodeid` asset; `task iso:unsigned PLATFORM=proxmox STATEKEY=nodeid` still builds
-one.
+ships: `vmware` with `tpm` and `nodeid`, and `proxmox` with `tpm`. Proxmox always
+offers a vTPM, so it has no `nodeid` asset; `task iso:unsigned PLATFORM=proxmox
+STATEKEY=nodeid` still builds one.
+
+> [!NOTE]
+> Bare metal isn't supported in v0.1.0, and the release ships no `baremetal` ISO
+> or UKI. `task iso:unsigned PLATFORM=baremetal` still builds one, and the
+> signed-ISO suite still boots it in CI, so the profile keeps working until bare
+> metal is supported.
 
 The ISO is the Proxmox install medium: it goes straight into Proxmox ISO storage,
 and `cryptosctl image sign` signs it. Every kernel, the base included, has the
 virtio-serial channel the QEMU guest agent uses, but no agent runs in the image yet, so leave the VM's
 **QEMU Guest Agent** option off.
-
-Boot the `baremetal` ISO from a BMC's virtual media or an optical drive: the kernel
-sees either as a CD-ROM. A USB stick written from the ISO won't install, because
-the node looks for a CD-ROM or a GPT partition named `EFI`.
 
 Boot it in a UEFI VM (Secure Boot off for an unsigned image, or unless your
 certificate is enrolled in `db`). Adding a
@@ -296,7 +297,7 @@ config reaches a node exclusively via the install path:
 > it against an established node's mTLS port would succeed only if the server
 > also accepts unauthenticated clients, which it does not.
 
-When a bare-metal node boots the CryptOS UKI for the first time it has no
+When a new node boots the CryptOS UKI for the first time it has no
 state partition, so init enters maintenance mode and listens on a temporary
 gRPC endpoint (default port 443) with a self-signed server certificate and
 no client authentication. The operator sends the machine config from a

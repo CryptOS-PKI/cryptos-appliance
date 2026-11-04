@@ -280,6 +280,11 @@ cryptos-node cdrom-3000` connects it.
 > Do this before the first boot of the CryptOS installer image, for the reason
 > given in step 2 above.
 
+> [!NOTE]
+> Bare metal isn't supported in v0.1.0, and the release ships no bare-metal
+> image. The two bare-metal sections below stay for a build you make yourself
+> with `PLATFORM=baremetal`; for v0.1.0, use VMware or Proxmox VE.
+
 ### Bare metal: firmware setup UI
 
 1. Copy `sb.der` to a FAT32 USB stick.
@@ -444,11 +449,11 @@ Secure Boot variables set, and attaches to the tag's release:
 | `cryptos-amd64-vmware[-nodeid]-unsigned-<build>.iso` | the installer ISO around it |
 | `cryptos-amd64-proxmox-<build>.uki.unsigned` | the unsigned UKI for Proxmox VE (`tpm` only) |
 | `cryptos-amd64-proxmox-unsigned-<build>.iso` | the installer ISO around it |
-| `cryptos-amd64-baremetal-<build>.uki.unsigned` | the unsigned UKI for physical servers (`tpm` only) |
-| `cryptos-amd64-baremetal-unsigned-<build>.iso` | the installer ISO around it |
 | `cryptosctl-<os>-<arch>-<build>` | `cryptosctl` for linux and darwin on amd64 and arm64 |
 | `build-manifest.json` | the commit, build tag and file names |
 | `SHA256SUMS` | the SHA-256 of every other file |
+
+v0.1.0 ships no bare-metal UKI or ISO: bare metal isn't supported in v0.1.0.
 
 Before anything is attached, `build/release/check-unsigned.sh` fails the run if
 any UKI, on its own or inside an ISO, carries an Authenticode signature
