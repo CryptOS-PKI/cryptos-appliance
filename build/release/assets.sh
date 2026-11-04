@@ -6,8 +6,9 @@
 # carries either stops the run.
 #
 # VMware ships both state-key variants because a host without a key provider
-# can't give a guest a vTPM. Proxmox always can, so it ships tpm only, and so
-# does bare metal, where the state key seals in the server's TPM.
+# can't give a guest a vTPM. Proxmox always can, so it ships tpm only.
+# v0.1.0 ships no bare-metal image: the baremetal kernel profile still builds
+# and its signed-ISO CI leg still boots it, but it isn't a release asset.
 #
 # Each variant runs the whole `task iso:unsigned` recipe; the UKI is copied out
 # before the next build overwrites build/out/cryptos-<arch>.uki.unsigned.
@@ -16,7 +17,7 @@
 set -euo pipefail
 
 arch="${ARCH:-amd64}"
-variants=("vmware:tpm" "vmware:nodeid" "proxmox:tpm" "baremetal:tpm")
+variants=("vmware:tpm" "vmware:nodeid" "proxmox:tpm")
 
 log() { printf 'assets: %s\n' "$*" >&2; }
 
