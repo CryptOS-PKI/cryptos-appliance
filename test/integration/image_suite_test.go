@@ -1088,7 +1088,7 @@ func stepRootCeremony(t *testing.T, s *suite, st *suiteState) {
 	if err := checkBuildIdentity([]byte(version)); err != nil {
 		t.Fatalf("build identity: %v", err)
 	}
-	note(t, "software (nodeid) Root, ECDSA P-384; cryptosctl and the node report the stamped version")
+	note(t, "software (nodeid) Root, ECDSA P-384; cryptosctl and the node report stamped versions")
 }
 
 func stepIntermediate(t *testing.T, s *suite, st *suiteState) {
