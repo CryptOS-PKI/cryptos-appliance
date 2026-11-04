@@ -210,8 +210,11 @@ one.
 
 The ISO is the Proxmox install medium: it goes straight into Proxmox ISO storage,
 and `cryptosctl image sign` signs it. Every kernel, the base included, has the
-virtio-serial channel the QEMU guest agent uses, but no agent runs in the image yet, so leave the VM's
-**QEMU Guest Agent** option off.
+virtio-serial channel the QEMU guest agent uses, and the node's PID 1 answers on it,
+so the VM's **QEMU Guest Agent** option can be on. The agent answers a fixed list of
+read-only commands plus shutdown and refuses everything else, `guest-exec` and the
+filesystem freeze included, so turn the agent's freeze-on-backup option off. The
+signed-ISO suite checks the agent on Proxmox's virtual hardware.
 
 Boot the `baremetal` ISO from a BMC's virtual media or an optical drive: the kernel
 sees either as a CD-ROM. A USB stick written from the ISO won't install, because

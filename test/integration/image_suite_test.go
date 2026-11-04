@@ -318,7 +318,30 @@ type vmHardware struct {
 	cd          string
 	// installDisk is the path the node sees the disk at.
 	installDisk string
+	// guestAgent attaches the QEMU guest agent's virtio-serial port, as a
+	// Proxmox VM with "QEMU Guest Agent" turned on has.
+	guestAgent bool
 }
+
+// qgaPortName is the virtio-serial port name the guest agent listens on.
+const qgaPortName = "org.qemu.guest_agent.0"
+
+// guestAgentArgs is the QEMU arguments for the guest agent port on a host
+// socket at sock, or none when the hardware has no guest agent. The socket
+// is QEMU's (server=on) and QEMU starts without waiting for a client.
+func (hw vmHardware) guestAgentArgs(sock string) []string {
+	if !hw.guestAgent {
+		return nil
+	}
+	return []string{
+		"-chardev", "socket,id=qga0,path=" + sock + ",server=on,wait=off",
+		"-device", "virtio-serial",
+		"-device", "virtserialport,chardev=qga0,name=" + qgaPortName,
+	}
+}
+
+// qgaSocket is where a VM's guest agent port is on the host.
+func (v *vm) qgaSocket() string { return filepath.Join(v.dir, "qga.sock") }
 
 // storageArgs is the QEMU arguments for the controllers and the disk, in the
 // order QEMU needs them: a device's bus has to exist when it is read.
@@ -427,6 +450,10 @@ func (v *vm) start(t *testing.T) time.Time {
 		args = append(args,
 			"-drive", "if=none,id=cd,media=cdrom,readonly=on,format=raw,file="+v.iso,
 			"-device", hw.cd)
+	}
+	if qga := hw.guestAgentArgs(v.qgaSocket()); len(qga) > 0 {
+		t.Logf("%s: guest agent port %s on %s", v.name, qgaPortName, v.qgaSocket())
+		args = append(args, qga...)
 	}
 	if v.withTPM {
 		sock := v.startTPM(t)
