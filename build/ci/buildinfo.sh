@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Print the -ldflags -X arguments that stamp a binary's build identity into
 # internal/buildinfo (version, commit, build date), and the same version and
-# commit into github.com/Bugs5382/go-buildinfo, which cryptosctl reads its
-# version from once the cryptos-node pin carries that move. The linker ignores
-# -X for a package a binary doesn't link, so both sets are always passed.
+# commit into github.com/Bugs5382/go-buildinfo, which cryptosctl and the node
+# read their version and commit from. The linker ignores -X for a package a
+# binary doesn't link, so both sets are always passed.
 # Every Go build of a shipped binary uses it, so the node image and cryptosctl
 # built from one checkout report the same identity (`cryptosctl status` /
 # `cryptosctl version`):
