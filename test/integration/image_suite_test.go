@@ -1771,11 +1771,13 @@ func stepRekey(t *testing.T, s *suite, st *suiteState) {
 		t.Fatalf("the CRL (%d entries) no longer lists %s, revoked before the re-key", len(crl.RevokedCertificateEntries), revoked.SerialNumber.Text(16))
 	}
 
-	// The request for the revoked leaf names the old key, its issuer. The
-	// rotation discards the old key, so the only responder the node can hold
-	// afterwards is one the new key certified: a response from a responder
-	// that still chains to the old key is one a client checking against the
-	// new Intermediate rejects (cryptos-node#383).
+	// The request for the revoked leaf names the old key, its issuer. A
+	// client checking that leaf validates against the old Intermediate, the
+	// one it chains to, so the node answers it with the responder the old key
+	// certified, kept from before the rotation (cryptos-node#393). A request
+	// naming the new key gets the responder the new key certified
+	// (cryptos-node#383). Either way the responder must chain to the issuer
+	// the request names.
 	responder := func(c *x509.Certificate, issuer *x509.Certificate) *ocsp.Response {
 		t.Helper()
 		req, err := ocsp.CreateRequest(c, issuer, &ocsp.RequestOptions{Hash: crypto.SHA256})
@@ -1798,19 +1800,23 @@ func stepRekey(t *testing.T, s *suite, st *suiteState) {
 		if r.Certificate == nil {
 			t.Fatalf("OCSP for %s: the response carries no responder certificate", c.SerialNumber.Text(16))
 		}
-		if err := r.Certificate.CheckSignatureFrom(after); err != nil {
-			if r.Certificate.CheckSignatureFrom(before) == nil {
-				t.Fatalf("OCSP for %s: the responder certificate (serial %s) is still the one the old key signed", c.SerialNumber.Text(16), r.Certificate.SerialNumber.Text(16))
+		if err := r.Certificate.CheckSignatureFrom(issuer); err != nil {
+			other := after
+			if issuer == after {
+				other = before
 			}
-			t.Fatalf("OCSP for %s: the responder certificate is not signed by the re-keyed Intermediate: %v", c.SerialNumber.Text(16), err)
+			if r.Certificate.CheckSignatureFrom(other) == nil {
+				t.Fatalf("OCSP for %s: the responder certificate (serial %s) was signed by the other Intermediate key, not the one the request names", c.SerialNumber.Text(16), r.Certificate.SerialNumber.Text(16))
+			}
+			t.Fatalf("OCSP for %s: the responder certificate is not signed by the issuer the request names: %v", c.SerialNumber.Text(16), err)
 		}
 		return r
 	}
-	r := responder(revoked, before)
-	if r.Status != ocsp.Revoked || r.RevocationReason != ocsp.KeyCompromise {
-		t.Fatalf("OCSP for the leaf revoked before the re-key: status %d reason %d, want revoked (keyCompromise)", r.Status, r.RevocationReason)
+	old := responder(revoked, before)
+	if old.Status != ocsp.Revoked || old.RevocationReason != ocsp.KeyCompromise {
+		t.Fatalf("OCSP for the leaf revoked before the re-key: status %d reason %d, want revoked (keyCompromise)", old.Status, old.RevocationReason)
 	}
-	r = responder(leaf, after)
+	r := responder(leaf, after)
 	if r.Status != ocsp.Good {
 		t.Fatalf("OCSP for the leaf issued after the re-key: status %d, want good", r.Status)
 	}
@@ -1818,8 +1824,8 @@ func stepRekey(t *testing.T, s *suite, st *suiteState) {
 	if out := st.inter.mustCtl(t, "audit", "verify"); !strings.Contains(out, "audit chain intact") {
 		t.Fatalf("audit verify after the re-key:\n%s", out)
 	}
-	note(t, fmt.Sprintf("serial %s -> %s on a new key; leaf %s issues and chains to the Root; %s stays revoked on the CRL and over OCSP; OCSP responder %s certified by the new key; audit chain intact",
-		before.SerialNumber.Text(16), after.SerialNumber.Text(16), leaf.SerialNumber.Text(16), revoked.SerialNumber.Text(16), r.Certificate.SerialNumber.Text(16)))
+	note(t, fmt.Sprintf("serial %s -> %s on a new key; leaf %s issues and chains to the Root; %s stays revoked on the CRL and over OCSP (responder %s, kept from the old key); new-key OCSP responder %s certified by the new key; audit chain intact",
+		before.SerialNumber.Text(16), after.SerialNumber.Text(16), leaf.SerialNumber.Text(16), revoked.SerialNumber.Text(16), old.Certificate.SerialNumber.Text(16), r.Certificate.SerialNumber.Text(16)))
 }
 
 func stepEscrowExport(t *testing.T, s *suite, st *suiteState) {
