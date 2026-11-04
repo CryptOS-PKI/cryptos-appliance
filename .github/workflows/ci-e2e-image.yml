@@ -44,7 +44,9 @@ name: Full-image suite (QEMU Root and Intermediate)
 # (test/image/build-iso.sh, test/image/run-iso.sh). It then boots the ISO
 # again on a tap link with no DHCP server and reaches the maintenance API on
 # the link-local address the node gives itself. It also runs beside the
-# others.
+# others. It runs once per platform: VMware with the nodeid state key, Proxmox
+# on Proxmox's default virtual hardware, and bare metal on an NVMe disk, an
+# Intel NIC and a USB CD-ROM. Both of those seal the state key in swtpm.
 #
 # release.yml also calls this workflow (workflow_call) on every release
 # rehearsal and tag, on the same commit: the suite is the release's proof
@@ -366,13 +368,23 @@ jobs:
           if-no-files-found: warn
 
   iso:
-    name: Sign an unsigned ISO, install from it and upgrade (QEMU)
+    name: Sign an unsigned ISO, install from it and upgrade (QEMU, ${{ matrix.platform }})
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     # Two rootfs builds and three boots (the ISO, the installed disk and the
-    # upgrade) on top of a vmware kernel build, which only partly reuses the
-    # kernel cache the other jobs fill with the generic kernel.
+    # upgrade) on top of a platform kernel build, which keeps a kernel cache
+    # of its own.
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: vmware
+            statekey: nodeid
+          - platform: proxmox
+            statekey: tpm
+          - platform: baremetal
+            statekey: tpm
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -422,7 +434,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: build/.work/kernel
-          key: kernel-amd64-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config') }}
+          key: kernel-amd64-${{ matrix.platform }}-${{ hashFiles('build/ci/versions.env', 'build/kernel/cryptos.config', 'build/kernel/profiles/*.config') }}
 
       - name: Cache the static tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -435,6 +447,9 @@ jobs:
           key: e2e-static-tools-amd64-${{ hashFiles('build/ci/versions.env', 'build/cryptsetup/**', 'build/e2fsprogs/**', 'build/gptfdisk/**', 'build/dosfstools/**') }}
 
       - name: Build two unsigned ISOs and sign them with cryptosctl image sign
+        env:
+          E2E_ISO_PLATFORM: ${{ matrix.platform }}
+          E2E_ISO_STATEKEY: ${{ matrix.statekey }}
         run: bash test/image/build-iso.sh
 
       - name: Check the signed ISO, install from it, upgrade, reach it with no DHCP
@@ -446,7 +461,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: e2e-iso-results
+          name: e2e-iso-results-${{ matrix.platform }}
           path: |
             ${{ runner.temp }}/e2e-iso/*.md
             ${{ runner.temp }}/e2e-iso/*.log

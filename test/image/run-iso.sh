@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the signed-ISO test: check an ISO signed with `cryptosctl image sign`
 # with tools of its own (xorriso, mtools, sbverify), boot it in QEMU (OVMF,
-# Secure Boot off) on a blank disk, install a nodeid Root from it over the
+# Secure Boot off) on a blank disk, on the virtual hardware of the platform
+# build-iso.sh built, install a Root from it over the
 # maintenance API, boot the installed disk, and upgrade that node in place to
 # a second image signed the same way (cryptos-appliance#83). It also boots
 # the ISO on a host tap link with no DHCP server and reaches the maintenance
@@ -37,7 +38,9 @@ for f in cryptosctl signed-cert.pem versions.env; do
 done
 # shellcheck source=/dev/null
 source "$dir/versions.env"
-signed="cryptos-amd64-vmware-nodeid-$E2E_ISO_BUILD_TAG"
+suffix=""
+[ "$E2E_ISO_STATEKEY" = nodeid ] && suffix="-nodeid"
+signed="cryptos-amd64-$E2E_ISO_PLATFORM$suffix-$E2E_ISO_BUILD_TAG"
 for f in "first/$signed.iso" "first/$signed.uki" "next/$signed.uki" "next/$signed.uki.sig"; do
   [ -f "$dir/$f" ] || { log "missing $dir/$f (run test/image/build-iso.sh first)"; exit 1; }
 done
@@ -85,6 +88,8 @@ set +e
   cd "$root" &&
     CRYPTOS_E2E_ISO=1 \
       E2E_ISO_TAP="$tap" \
+      E2E_ISO_PLATFORM="$E2E_ISO_PLATFORM" \
+      E2E_ISO_STATEKEY="$E2E_ISO_STATEKEY" \
       E2E_ISO="$dir/first/$signed.iso" \
       E2E_ISO_UKI="$dir/first/$signed.uki" \
       E2E_ISO_NEXT_UKI="$dir/next/$signed.uki" \

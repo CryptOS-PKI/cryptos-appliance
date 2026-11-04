@@ -55,16 +55,16 @@ make -C "$src" ARCH="$karch" olddefconfig
 # olddefconfig writes a disabled bool as "# CONFIG_X is not set", not "=n".
 grep -q '^# CONFIG_MODULES is not set' "$src/.config" || { echo "CONFIG_MODULES must be disabled" >&2; exit 1; }
 
-# Fail closed if any requested `=y` option was silently dropped during the merge
-# (an unmet dependency in the tiny base makes olddefconfig discard it, which is
-# how a non-bootable / de-hardened image can ship unnoticed). Every `CONFIG_x=y`
-# in every fragment must survive into the final .config.
+# Fail closed if any requested option was silently dropped or changed during
+# the merge (an unmet dependency in the tiny base makes olddefconfig discard it,
+# which is how a non-bootable / de-hardened image can ship unnoticed). Every
+# `CONFIG_x=y`, and every value such as `CONFIG_NR_CPUS=512`, in every fragment
+# must survive into the final .config exactly as asked.
 dropped=""
 for frag in "${fragments[@]}"; do
   while IFS= read -r opt; do
-    key="${opt%%=*}"
-    grep -q "^${key}=y" "$src/.config" || dropped="$dropped $key"
-  done < <(grep -E '^CONFIG_[A-Z0-9_]+=y' "$frag")
+    grep -qxF "$opt" "$src/.config" || dropped="$dropped ${opt%%=*}"
+  done < <(grep -E '^CONFIG_[A-Z0-9_]+=' "$frag" | grep -vE '=n$')
 done
 if [ -n "$dropped" ]; then
   echo "kernel: requested options dropped from .config (unmet deps in the base?):$dropped" >&2

@@ -63,6 +63,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -271,6 +272,9 @@ func (s *suite) timing(format string, args ...any) {
 
 // ---- VMs --------------------------------------------------------------------
 
+// vmCPUs is how many CPUs QEMU gives every node it starts.
+const vmCPUs = 2
+
 // vm is one booted CryptOS node: its disk, TPM, serial line and forwards.
 type vm struct {
 	s        *suite
@@ -299,6 +303,41 @@ type vm struct {
 	// QEMU's user network, which always runs a DHCP server. mac sets the
 	// NIC's address. mgmtPort and forwards do not apply to a tap VM.
 	tap, mac string
+	// hw, when set, replaces the default virtio disk, virtio NIC and AHCI
+	// CD-ROM with the devices of the platform under test.
+	hw *vmHardware
+}
+
+// vmHardware is the set of devices a VM boots on, each a QEMU -device value:
+// disk has to bind drive=disk, nic netdev=n0 and cd drive=cd. controllers are
+// the extra -device values those three sit on.
+type vmHardware struct {
+	controllers []string
+	disk        string
+	nic         string
+	cd          string
+	// installDisk is the path the node sees the disk at.
+	installDisk string
+}
+
+// storageArgs is the QEMU arguments for the controllers and the disk, in the
+// order QEMU needs them: a device's bus has to exist when it is read.
+func (hw vmHardware) storageArgs() []string {
+	var args []string
+	for _, c := range hw.controllers {
+		args = append(args, "-device", c)
+	}
+	return append(args, "-device", hw.disk)
+}
+
+// defaultHardware is what the full-image suite boots on.
+func defaultHardware() vmHardware {
+	return vmHardware{
+		disk:        "virtio-blk-pci,drive=disk,bootindex=1",
+		nic:         "virtio-net-pci,netdev=n0",
+		cd:          "ide-cd,drive=cd,bus=ide.0,bootindex=2",
+		installDisk: "/dev/vda",
+	}
 }
 
 type admin struct{ cert, key string }
@@ -352,37 +391,42 @@ func (v *vm) boot(t *testing.T) {
 func (v *vm) start(t *testing.T) time.Time {
 	t.Helper()
 	e := v.s.env
+	hw := defaultHardware()
+	if v.hw != nil {
+		hw = *v.hw
+	}
 	args := []string{
-		"-machine", "q35,accel=" + e.accel, "-smp", "2", "-m", "2048",
+		"-machine", "q35,accel=" + e.accel, "-smp", strconv.Itoa(vmCPUs), "-m", "2048",
 		"-uuid", v.uuid,
 		"-display", "none", "-monitor", "none", "-serial", "stdio",
 		"-drive", "if=pflash,format=raw,unit=0,readonly=on,file=" + e.ovmfCode,
 		"-drive", "if=pflash,format=raw,unit=1,file=" + v.vars,
 		"-drive", "if=none,id=disk,format=raw,file=" + v.disk,
-		"-device", "virtio-blk-pci,drive=disk,bootindex=1",
-		"-drive", "if=none,id=cover,format=raw,file=" + v.cover,
-		"-device", "virtio-blk-pci,drive=cover,serial=cryptos-cover",
 	}
+	args = append(args, hw.storageArgs()...)
+	args = append(args,
+		"-drive", "if=none,id=cover,format=raw,file="+v.cover,
+		"-device", "virtio-blk-pci,drive=cover,serial=cryptos-cover")
 	if v.tap != "" {
 		args = append(args,
 			"-netdev", "tap,id=n0,ifname="+v.tap+",script=no,downscript=no",
-			"-device", "virtio-net-pci,netdev=n0,mac="+v.mac)
+			"-device", hw.nic+",mac="+v.mac)
 	} else {
 		args = append(args,
 			"-netdev", "user,id=n0,net=10.0.0.0/24,host=10.0.0.1,dns=10.0.0.3,"+strings.Join(append([]string{
 				"hostfwd=tcp:127.0.0.1:" + v.mgmtPort + "-" + suiteNodeAddr + ":443"}, v.forwards...), ","),
-			"-device", "virtio-net-pci,netdev=n0")
+			"-device", hw.nic)
 	}
 	if strings.HasPrefix(e.accel, "kvm") {
 		args = append(args, "-cpu", "host")
 	}
 	if v.iso != "" {
-		// On the q35 machine's AHCI controller, which the kernel sees as
-		// sr0. The disk's bootindex comes first, so once the node has
-		// installed itself the firmware boots the disk instead.
+		// By default on the q35 machine's AHCI controller, which the kernel
+		// sees as sr0. The disk's bootindex comes first, so once the node
+		// has installed itself the firmware boots the disk instead.
 		args = append(args,
 			"-drive", "if=none,id=cd,media=cdrom,readonly=on,format=raw,file="+v.iso,
-			"-device", "ide-cd,drive=cd,bus=ide.0,bootindex=2")
+			"-device", hw.cd)
 	}
 	if v.withTPM {
 		sock := v.startTPM(t)

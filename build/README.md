@@ -89,7 +89,10 @@ EFI stub). See `.github/workflows/ci-image.yml` for the exact apt list.
 Every shipped binary (`init`, `cryptosctl`, `cryptos-console`, the
 switch-root shim, and the `task build` outputs) is stamped with the build's
 identity through `build/ci/buildinfo.sh`, which prints the `-ldflags -X`
-arguments for `internal/buildinfo`:
+arguments for `internal/buildinfo`. The version and commit also go to
+`github.com/Bugs5382/go-buildinfo`, which `cryptosctl` reads its version from
+in newer cryptos-node builds; the linker skips them in a binary that doesn't
+link that package:
 
 | Field | Source |
 |---|---|
@@ -178,13 +181,33 @@ written and no hostname resolves.
 
 `task iso PLATFORM=<platform>` builds a UEFI-bootable ISO for a target platform.
 A platform is an additive kernel-config fragment in `build/kernel/profiles/`
-(e.g. `vmware.config` = NVMe/AHCI/PVSCSI + e1000e/vmxnet3), merged onto the base
-`cryptos.config` during `kernel:build`. The base is unchanged, so builds with no
-`PLATFORM` behave as before.
+merged onto the base `cryptos.config` during `kernel:build`. The base is
+unchanged, so builds with no `PLATFORM` behave as before.
+
+| `PLATFORM` | Profile | Target |
+|---|---|---|
+| `vmware` | `profiles/vmware.config` | NVMe, AHCI, PVSCSI, e1000e and vmxnet3 |
+| `proxmox` | `profiles/proxmox.config` | VirtIO SCSI, VirtIO Block, NVMe, AHCI, e1000, e1000e, the virtio-serial channel and VirtIO RNG |
+| `baremetal` | `profiles/baremetal.config` | NVMe, AHCI, LSI and MegaRAID, HPE Smart Array, Adaptec, USB, and Intel, Broadcom, Mellanox and Realtek NICs, every CPU (SMP up to 512, with x2APIC and the Intel and AMD IOMMUs); no guest drivers beyond the base |
 
     task iso PLATFORM=vmware        # -> build/out/cryptos-amd64-vmware-<build>.iso
 
-    task iso:unsigned PLATFORM=vmware   # -> build/out/cryptos-amd64-vmware-unsigned-<build>.iso
+    task iso:unsigned PLATFORM=proxmox   # -> build/out/cryptos-amd64-proxmox-unsigned-<build>.iso
+
+`build/release/assets.sh` lists the platform and state-key variants a release
+ships: `vmware` with `tpm` and `nodeid`, and `proxmox` and `baremetal` with `tpm`.
+Proxmox always offers a vTPM and a server has its own TPM, so neither has a
+`nodeid` asset; `task iso:unsigned PLATFORM=proxmox STATEKEY=nodeid` still builds
+one.
+
+The ISO is the Proxmox install medium: it goes straight into Proxmox ISO storage,
+and `cryptosctl image sign` signs it. Every kernel, the base included, has the
+virtio-serial channel the QEMU guest agent uses, but no agent runs in the image yet, so leave the VM's
+**QEMU Guest Agent** option off.
+
+Boot the `baremetal` ISO from a BMC's virtual media or an optical drive: the kernel
+sees either as a CD-ROM. A USB stick written from the ISO won't install, because
+the node looks for a CD-ROM or a GPT partition named `EFI`.
 
 Boot it in a UEFI VM (Secure Boot off for an unsigned image, or unless your
 certificate is enrolled in `db`). Adding a
