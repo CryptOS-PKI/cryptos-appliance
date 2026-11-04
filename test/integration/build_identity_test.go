@@ -19,9 +19,11 @@ limitations under the License.
 */
 
 // The build identity check of the full-image suite: the suite's cryptosctl
-// and the node it boots are built from one checkout with build/ci/buildinfo.sh,
-// so both must report that build's stamped version, and neither may fall back
-// to "dev" or an "unknown" commit. cryptosctl reads its version from
+// and the node it boots are both stamped with build/ci/buildinfo.sh, so
+// neither may fall back to "dev" or an "unknown" commit. They needn't match:
+// CI reuses a cached image when nothing that goes into it changed, so the
+// node can carry an earlier commit's version than the cryptosctl built for
+// the run. cryptosctl reads its version from
 // github.com/Bugs5382/go-buildinfo, so this is what catches a build that
 // stamps the wrong package.
 
@@ -62,9 +64,6 @@ func checkBuildIdentity(out []byte) error {
 	if unstamped(r.Node.Version) {
 		return fmt.Errorf("node version is %q, want the stamped build version", r.Node.Version)
 	}
-	if r.Node.Version != r.Client.Version {
-		return fmt.Errorf("node version %q is not cryptosctl's %q; both come from one build", r.Node.Version, r.Client.Version)
-	}
 	return nil
 }
 
@@ -96,9 +95,8 @@ func TestCheckBuildIdentity(t *testing.T) {
 			wantErr: `node version is "dev"`,
 		},
 		{
-			name:    "node and client differ",
-			out:     `{"client":{"version":"v0.1.0","commit":"854f3f8","build_date":"x","go_version":"go1.26.10"},"node":{"version":"v0.0.9"}}`,
-			wantErr: `node version "v0.0.9" is not cryptosctl's "v0.1.0"`,
+			name: "a cached image's node version differs from the client's",
+			out:  `{"client":{"version":"v0.1.0-rc.1-5-g6bdf5d2","commit":"6bdf5d2","build_date":"x","go_version":"go1.26.10"},"node":{"version":"v0.1.0-rc.1-4-gd18d19a"}}`,
 		},
 		{
 			name:    "no node in the report",
