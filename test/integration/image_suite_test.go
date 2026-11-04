@@ -1056,7 +1056,12 @@ func stepRootCeremony(t *testing.T, s *suite, st *suiteState) {
 	if st.rootCert.Subject.CommonName != suiteRootCN || !st.rootCert.IsCA {
 		t.Fatalf("root certificate: CN %q CA %t", st.rootCert.Subject.CommonName, st.rootCert.IsCA)
 	}
-	note(t, "software (nodeid) Root, ECDSA P-384")
+	version := st.root.mustCtl(t, "version", "-o", "json")
+	t.Logf("root: cryptosctl version against the node:\n%s", version)
+	if err := checkBuildIdentity([]byte(version)); err != nil {
+		t.Fatalf("build identity: %v", err)
+	}
+	note(t, "software (nodeid) Root, ECDSA P-384; cryptosctl and the node report the stamped version")
 }
 
 func stepIntermediate(t *testing.T, s *suite, st *suiteState) {
