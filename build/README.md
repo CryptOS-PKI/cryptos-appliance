@@ -90,9 +90,9 @@ Every shipped binary (`init`, `cryptosctl`, `cryptos-console`, the
 switch-root shim, and the `task build` outputs) is stamped with the build's
 identity through `build/ci/buildinfo.sh`, which prints the `-ldflags -X`
 arguments for `internal/buildinfo`. The version and commit also go to
-`github.com/Bugs5382/go-buildinfo`, which `cryptosctl` reads its version from
-in newer cryptos-node builds; the linker skips them in a binary that doesn't
-link that package:
+`github.com/Bugs5382/go-buildinfo`, which `cryptosctl` and the node read
+their version and commit from; the linker skips them in a binary that doesn't
+link that package (the switch-root shim):
 
 | Field | Source |
 |---|---|
@@ -110,6 +110,14 @@ git metadata the build still succeeds but reports version `dev` and an
 ```bash
 go build -ldflags "-s -w $(build/ci/buildinfo.sh)" ./cmd/cryptosctl
 ```
+
+`init`, `cryptosctl` and `cryptos-console` come from the pinned cryptos-node
+module. No package in this repo imports them, so `go.mod` lists them as `tool`
+directives; that keeps `go mod tidy` from dropping the modules only they need.
+`build/ci/node-commands_test.sh` (run by `task build:test`) checks each one
+resolves on every target the build produces. The full-image suite checks that
+`cryptosctl version` against the booted Root reports the stamped version, not
+`dev`, for both the CLI and the node.
 
 ## Artifact file names
 
