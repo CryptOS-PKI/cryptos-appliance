@@ -304,7 +304,7 @@ no client authentication. The operator sends the machine config from a
 workstation on the same network:
 
 > [!NOTE]
-> `cryptosctl` runs on Linux and macOS today. A Windows build is coming.
+> `cryptosctl` runs on Linux, macOS and Windows (amd64 and arm64).
 
 ```sh
 cryptosctl \
