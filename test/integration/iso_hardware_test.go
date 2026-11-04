@@ -26,10 +26,11 @@ import (
 func TestISOHardware(t *testing.T) {
 	cases := []struct {
 		platform, disk, installDisk, nic string
+		guestAgent                       bool
 	}{
-		{"vmware", "virtio-blk-pci,drive=disk,bootindex=1", "/dev/vda", "virtio-net-pci,netdev=n0"},
-		{"proxmox", "scsi-hd,drive=disk,bus=scsi0.0,bootindex=1", "/dev/sda", "virtio-net-pci,netdev=n0"},
-		{"baremetal", "nvme,drive=disk,serial=cryptos-nvme,bootindex=1", "/dev/nvme0n1", "e1000e,netdev=n0"},
+		{"vmware", "virtio-blk-pci,drive=disk,bootindex=1", "/dev/vda", "virtio-net-pci,netdev=n0", false},
+		{"proxmox", "scsi-hd,drive=disk,bus=scsi0.0,bootindex=1", "/dev/sda", "virtio-net-pci,netdev=n0", true},
+		{"baremetal", "nvme,drive=disk,serial=cryptos-nvme,bootindex=1", "/dev/nvme0n1", "e1000e,netdev=n0", false},
 	}
 	for _, c := range cases {
 		t.Run(c.platform, func(t *testing.T) {
@@ -39,6 +40,9 @@ func TestISOHardware(t *testing.T) {
 			}
 			if hw.disk != c.disk || hw.installDisk != c.installDisk || hw.nic != c.nic {
 				t.Fatalf("got disk %q at %q, NIC %q", hw.disk, hw.installDisk, hw.nic)
+			}
+			if hw.guestAgent != c.guestAgent {
+				t.Fatalf("guest agent port %t, want %t", hw.guestAgent, c.guestAgent)
 			}
 		})
 	}
@@ -64,6 +68,23 @@ func TestStorageArgsPutControllersFirst(t *testing.T) {
 	args := strings.Join(hw.storageArgs(), " ")
 	if ctrl, disk := strings.Index(args, "virtio-scsi-pci"), strings.Index(args, "scsi-hd"); ctrl < 0 || disk < ctrl {
 		t.Fatalf("the controller must precede the disk: %s", args)
+	}
+}
+
+// A Proxmox VM with "QEMU Guest Agent" on gets a virtio-serial port named
+// org.qemu.guest_agent.0 on a host socket; without it, no port at all.
+func TestGuestAgentArgs(t *testing.T) {
+	if got := (vmHardware{}).guestAgentArgs("/run/qga.sock"); len(got) != 0 {
+		t.Fatalf("no guest agent: want no arguments, got %q", got)
+	}
+	want := []string{
+		"-chardev", "socket,id=qga0,path=/run/qga.sock,server=on,wait=off",
+		"-device", "virtio-serial",
+		"-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+	}
+	got := (vmHardware{guestAgent: true}).guestAgentArgs("/run/qga.sock")
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("guest agent arguments:\n got %q\nwant %q", got, want)
 	}
 }
 

@@ -28,6 +28,10 @@ limitations under the License.
 // node from it over the maintenance API the way an operator does, and
 // upgrades that node to a second image signed with the same key.
 //
+// On Proxmox's virtual hardware the VM also has the QEMU guest agent port,
+// as a Proxmox VM with "QEMU Guest Agent" turned on does, and a step checks
+// the node's agent answers on it and refuses guest-exec (guest_agent_test.go).
+//
 // It also boots the ISO on a link with no DHCP server and reaches the
 // maintenance API on the link-local address the node gives itself
 // (cryptos-node#381).
@@ -94,6 +98,7 @@ func isoHardware(platform string) (vmHardware, error) {
 		hw.controllers = []string{"virtio-scsi-pci,id=scsi0"}
 		hw.disk = "scsi-hd,drive=disk,bus=scsi0.0,bootindex=1"
 		hw.installDisk = "/dev/sda"
+		hw.guestAgent = true
 		return hw, nil
 	case "baremetal":
 		// The closest QEMU gets to a server: an NVMe disk, an Intel NIC with
@@ -189,6 +194,10 @@ func TestSignedISO(t *testing.T) {
 	if ie.platform == "baremetal" {
 		smp := "signed ISO: the bare-metal kernel brings up all " + strconv.Itoa(vmCPUs) + " CPUs QEMU gives it"
 		s.step(smp, []string{install}, func(t *testing.T) { isoStepSMP(t, st) })
+	}
+	if hw.guestAgent {
+		qga := "signed ISO: the QEMU guest agent answers guest-sync-delimited, guest-ping and guest-get-osinfo on " + qgaPortName + " and refuses guest-exec"
+		s.step(qga, []string{install}, func(t *testing.T) { isoStepGuestAgent(t, st) })
 	}
 	s.step(upgrade, []string{install}, func(t *testing.T) { isoStepUpgrade(t, st) })
 

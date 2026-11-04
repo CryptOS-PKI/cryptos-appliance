@@ -215,8 +215,11 @@ STATEKEY=nodeid` still builds one.
 
 The ISO is the Proxmox install medium: it goes straight into Proxmox ISO storage,
 and `cryptosctl image sign` signs it. Every kernel, the base included, has the
-virtio-serial channel the QEMU guest agent uses, but no agent runs in the image yet, so leave the VM's
-**QEMU Guest Agent** option off.
+virtio-serial channel the QEMU guest agent uses, and the node's PID 1 answers on it,
+so the VM's **QEMU Guest Agent** option can be on. The agent answers a fixed list of
+read-only commands plus shutdown and refuses everything else, `guest-exec` and the
+filesystem freeze included, so turn the agent's freeze-on-backup option off. The
+signed-ISO suite checks the agent on Proxmox's virtual hardware.
 
 Boot it in a UEFI VM (Secure Boot off for an unsigned image, or unless your
 certificate is enrolled in `db`). Adding a

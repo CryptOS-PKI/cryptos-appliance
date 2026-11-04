@@ -45,8 +45,10 @@ name: Full-image suite (QEMU Root and Intermediate)
 # again on a tap link with no DHCP server and reaches the maintenance API on
 # the link-local address the node gives itself. It also runs beside the
 # others. It runs once per platform: VMware with the nodeid state key, Proxmox
-# on Proxmox's default virtual hardware, and bare metal on an NVMe disk, an
-# Intel NIC and a USB CD-ROM. Both of those seal the state key in swtpm.
+# on Proxmox's default virtual hardware with the QEMU guest agent port (a
+# step checks the node's agent answers and refuses guest-exec), and bare
+# metal on an NVMe disk, an Intel NIC and a USB CD-ROM. Both of those seal the
+# state key in swtpm.
 #
 # release.yml also calls this workflow (workflow_call) on every release
 # rehearsal and tag, on the same commit: the suite is the release's proof
