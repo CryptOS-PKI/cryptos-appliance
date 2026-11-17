@@ -1,7 +1,7 @@
 github.com/Bugs5382/go-buildinfo v1.1.0 h1:Iw0TfvDFwZVvuIlKe7/0bYcmZTp+4GoG2gpuYm1eqhI=
 github.com/Bugs5382/go-buildinfo v1.1.0/go.mod h1:1YrfFNUmwTv+/+nH1AAWQagO1QWsNc5KzKHgOV7JR9k=
-github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.1.0.20261115200417-5e0f370b475c h1:E3UqjxfZ9LKPPCfjY5V0jG8y7LWZOd9Kxvi3THK0tLg=
-github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.1.0.20261115200417-5e0f370b475c/go.mod h1:om6YcjcKRcRMZdQzHvoKy09DVX0Qci37MGyvOODD3UM=
+github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.2.0.20261117214741-25a59f73ef46 h1:HfOIeGcVBvYmOdwXgxlq1FvGoVJE8erJIEO8gqC0GNY=
+github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.2.0.20261117214741-25a59f73ef46/go.mod h1:om6YcjcKRcRMZdQzHvoKy09DVX0Qci37MGyvOODD3UM=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
