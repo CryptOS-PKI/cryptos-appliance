@@ -15,8 +15,9 @@ number.
 - **Publishing the release-drafter draft is the tag.** Release Drafter keeps one draft per repo on
   every push to `main`. I publish each draft as a prerelease; publishing creates the tag at the
   draft's target commit. Nothing tags by hand and no workflow creates a tag.
-- **Order:** `cryptos-node`, `cryptos-web`, `cryptos-manager` and `docs` first, at the commits
-  `release/pins.yaml` names; `cryptos-appliance` last. Publishing the appliance's draft is what
+- **Order:** `cryptos-node`, `cryptos-web` and `cryptos-manager` first, at the commits
+  `release/pins.yaml` names; `cryptos-appliance` last. The website holds the docs and releases on
+  its own version line, so it has no pin and no tag here. Publishing the appliance's draft is what
   starts this workflow, and its `guard` job checks the other tags already sit at their pins.
 - **cryptos-web before cryptos-manager, same version:** the two are versioned in lockstep. The
   manager's release image embeds the web console from `cryptos-web`'s tag of the same name and
@@ -103,7 +104,7 @@ VMware or other hardware: power cuts mid-upgrade are not proven per release.
 
 The candidate failed, and the tag is already live.
 
-1. I save each of the six repos' release notes (`gh release view --json body`) for the record,
+1. I save each of the four repos' release notes (`gh release view --json body`) for the record,
    with the run link.
 2. I set the `v*` tag ruleset to disabled in each repo.
 3. I delete each release and its tag (`gh release delete <tag> --cleanup-tag`).
