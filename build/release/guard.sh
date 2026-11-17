@@ -6,10 +6,10 @@
 # a general YAML parser.
 #
 # On a v* tag push it also checks (release-workflow-design.md 2.1-2.2): the
-# tag itself is vX.Y.Z or vX.Y.Z-rc.N, and each of the five release repos
-# (the four pinned repos plus cryptos-appliance itself) has a published,
+# tag itself is vX.Y.Z or vX.Y.Z-rc.N, and each of the four release repos
+# (the three pinned repos plus cryptos-appliance itself) has a published,
 # non-draft prerelease at its pinned commit. On a workflow_dispatch
-# rehearsal it instead prints each of those five repos' release-drafter
+# rehearsal it instead prints each of those four repos' release-drafter
 # draft (name, tag, target, prerelease) next to its pin and fails on any
 # mismatch with pins.yaml's own `release:` version. The workflow token can't
 # list another repo's drafts (only users with push access see them), so a
@@ -40,7 +40,7 @@ root="$(cd "$here/../.." && pwd)"
 pins_file="${1:-$root/release/pins.yaml}"
 go_mod="${GUARD_GO_MOD:-$root/go.mod}"
 
-required_repos=(cryptos-node cryptos-manager cryptos-web docs)
+required_repos=(cryptos-node cryptos-manager cryptos-web)
 
 declare -A repo_commit
 errors=()
@@ -137,7 +137,7 @@ fi
 
 # --- tag-release and rehearsal-dispatch checks ---
 #
-# "Release repos" are the four pinned repos plus cryptos-appliance itself,
+# "Release repos" are the three pinned repos plus cryptos-appliance itself,
 # which has no pin (GUARD_SELF_COMMIT / HEAD stands in for one).
 
 release_repos=("${required_repos[@]}" cryptos-appliance)
