@@ -224,6 +224,10 @@ func stepManagerRun(t *testing.T, s *suite, st *suiteState) []managerResult {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, e.managerE2E)
 	cmd.Env = append(os.Environ(),
+		// Linking saves the node's credentials under the manager's state
+		// directory, /var/lib/cryptos-manager by default, which the runner
+		// can't write.
+		"MANAGER_NODE_CREDS_DIR="+filepath.Join(dir, "node-creds"),
 		"E2E_MANAGER_BIN="+e.managerBin,
 		"E2E_DATABASE_URL="+e.managerDB,
 		"E2E_ADMIN_EMAIL=suite-admin@cryptos.test",
