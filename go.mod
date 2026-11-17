@@ -3,7 +3,7 @@ module github.com/CryptOS-PKI/cryptos-appliance
 go 1.26.11
 
 require (
-	github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.1.0.20261115200417-5e0f370b475c
+	github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.2.0.20261117214741-25a59f73ef46
 	github.com/google/go-tpm v0.9.8
 	github.com/google/go-tpm-tools v0.4.8
 	github.com/spf13/cobra v1.10.2

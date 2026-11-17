@@ -282,9 +282,10 @@ cryptosctl="$work/cryptosctl"
 # host itself: a connection from it would reach the guest from the guest's
 # own address and never complete.
 mgmt_alias="10.0.0.10"
-# The Root's and the Intermediate's management forwards
-# (test/integration/image_suite_test.go rootMgmtPort, intMgmtPort).
-mgmt_ports="4443 4444"
+# The Root's, the Intermediate's and the spare's management forwards
+# (test/integration/image_suite_test.go rootMgmtPort, intMgmtPort,
+# spareMgmtPort): the manager's run links the spare.
+mgmt_ports="4443 4444 4445"
 manager_env=()
 manager_dir="${E2E_IMAGE_MANAGER_DIR:-}"
 if [ -n "$manager_dir" ]; then
