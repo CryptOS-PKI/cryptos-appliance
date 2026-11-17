@@ -23,7 +23,7 @@ import (
 	"testing"
 )
 
-// The manager's run skips its linking, escrow-import and decommission steps
+// The manager's run skips its linking and decommission steps
 // when it has no spare node, and a skipped step shows green. With a spare
 // configured, a skip is a failure: it is how linking a node to the manager
 // stayed untested until v0.1.0-rc.2 shipped with it broken.
@@ -31,13 +31,13 @@ func TestRequireSpareRows(t *testing.T) {
 	ok := func(name string) managerResult { return managerResult{Name: name, Status: "ok"} }
 	all := []managerResult{
 		ok("fleet/list-nodes"),
-		ok(managerLinkRow), ok(managerEscrowImportRow), ok(managerDecommissionRow),
+		ok(managerLinkRow), ok(managerDecommissionRow),
 	}
 	if err := requireSpareRows(all); err != nil {
 		t.Fatalf("every spare row ok: want no error, got %v", err)
 	}
 
-	for _, row := range []string{managerLinkRow, managerEscrowImportRow, managerDecommissionRow} {
+	for _, row := range []string{managerLinkRow, managerDecommissionRow} {
 		var skipped, failed, missing []managerResult
 		for _, r := range all {
 			switch {

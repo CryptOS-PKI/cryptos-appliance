@@ -48,8 +48,8 @@ import (
 const (
 	managerRunStep       = "manager: cryptos-manager's end-to-end run against the Root and Intermediate"
 	managerScepStep      = "manager: SCEP on the Intermediate with approval held, reboot, running"
-	managerSpareStep     = "manager: a fresh spare node for the run to link, restore onto and decommission"
-	managerSpareRowsStep = "manager: the linking, escrow-import and decommission steps ran, none skipped"
+	managerSpareStep     = "manager: a spare node restored from the Root backup, for the run to link and decommission"
+	managerSpareRowsStep = "manager: the linking and decommission steps ran, none skipped"
 	managerListen        = "127.0.0.1:18943"
 	managerRunLimit      = 15 * time.Minute
 	managerStepLimit     = "8m"
@@ -58,15 +58,15 @@ const (
 	// issuing profiles, the SCEP listener and the TPM.
 	managerIntName  = "suite-intermediate"
 	managerRootName = "suite-root"
-	// managerSpareName is the fresh node the run may link, restore the Root's
-	// escrowed key onto and decommission: it permanently changes the node, so
-	// it is never the Root or the Intermediate.
+	// managerSpareName is the node the run may link and decommission: both
+	// permanently change it, so it is never the Root or the Intermediate.
 	managerSpareName = "suite-spare"
 
 	// The run's steps that need that node, by the name each reports. They skip
-	// without a spare, and a skip shows green.
+	// without a spare, and a skip shows green. The run's escrow-import step
+	// is not among them: it restores a key onto a linked node, and linking
+	// needs the node to have an identity, which the restore refuses.
 	managerLinkRow         = "enrollment/link-approve-and-reject"
-	managerEscrowImportRow = "escrow/import-onto-spare"
 	managerDecommissionRow = "decommission/spare-node"
 )
 
@@ -76,7 +76,7 @@ const (
 // row.
 func requireSpareRows(results []managerResult) error {
 	var notRun []string
-	for _, want := range []string{managerLinkRow, managerEscrowImportRow, managerDecommissionRow} {
+	for _, want := range []string{managerLinkRow, managerDecommissionRow} {
 		ran := false
 		for _, r := range results {
 			if r.Name == want && r.Status != "skip" {
@@ -133,21 +133,25 @@ func (s *suite) managerSteps(st *suiteState, hier string) {
 	}
 }
 
-// stepManagerSpare replaces the console-reset step's throwaway node with a
-// fresh one on its port, so the VM count stays at three. The run restores the
-// Root's escrowed key onto the spare, which a node that already has an
-// identity refuses, and the console reset left that node wiped and
-// re-provisioning.
+// stepManagerSpare replaces the console-reset step's throwaway node with one
+// the run may link and decommission, on the same port so the VM count stays at
+// three. Linking verifies the node's CA identity by attestation, so the node
+// has to be established: it is restored from the Root's backup, as the escrow
+// step does, and the run verifies it against the Root.
 func stepManagerSpare(t *testing.T, s *suite, st *suiteState) {
 	if st.spare != nil {
 		st.spare.stop()
 	}
 	st.spare = s.newVM(t, "link-spare", "564d0004-0000-0000-0000-00000000e2e4", spareMgmtPort, nil, rootYAML(st.adminPEM, "e2e-link-spare"), st.admin)
 	st.spare.boot(t)
-	if status := st.spare.status(t); !strings.Contains(status, "Identity:        NONE") {
-		t.Fatalf("fresh spare: want no identity:\n%s", status)
+	if out, err := st.spare.ctl(st.backupPwd+"\n", "ca", "import-key", "--backup", st.backup); err != nil {
+		t.Fatalf("restore the Root backup onto the spare: %v\n%s", err, out)
 	}
-	note(t, "a fresh node on port "+spareMgmtPort+", no identity, its management certificate pinned")
+	st.spare.trustCA(t)
+	if status := st.spare.status(t); !strings.Contains(status, "Identity:        ESTABLISHED") {
+		t.Fatalf("restored spare not ESTABLISHED:\n%s", status)
+	}
+	note(t, "a node restored from the Root backup on port "+spareMgmtPort+", established, for the run to link and decommission")
 }
 
 // stepManagerScepOn turns SCEP on for the Intermediate with every initial
@@ -188,11 +192,6 @@ func stepManagerRun(t *testing.T, s *suite, st *suiteState) []managerResult {
 	copyFile(t, st.admin.key, adminKey)
 	rootPEM := filepath.Join(creds, "root.pem")
 	writeFile(t, rootPEM, []byte(st.rootPEM))
-	// The spare has no CA yet, so it is linked by pinning its own management
-	// certificate, which the restore of the Root's key then replaces: the run
-	// dials it without verification afterwards.
-	sparePin := filepath.Join(creds, "spare.pem")
-	copyFile(t, st.spare.trust, sparePin)
 	nodes := filepath.Join(dir, "nodes.yaml")
 	writeFile(t, nodes, []byte(fmt.Sprintf(`nodes:
   - name: %[1]s
@@ -212,11 +211,10 @@ func stepManagerRun(t *testing.T, s *suite, st *suiteState) []managerResult {
     role: root
     adminCertPath: %[6]s
     adminKeyPath: %[7]s
-    caCertPath: %[11]s
-    insecureSkipNodeVerify: true
+    caCertPath: %[8]s
     spare: true
 `, managerIntName, managerRootName, e.mgmtAlias, intMgmtPort, rootMgmtPort, adminCert, adminKey, rootPEM,
-		managerSpareName, spareMgmtPort, sparePin)))
+		managerSpareName, spareMgmtPort)))
 
 	image, imageSHA := managerImage(t, s, st)
 	imageURL := serveFile(t, image)
