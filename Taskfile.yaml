@@ -127,6 +127,7 @@ tasks:
       - bash build/ci/buildinfo_test.sh
       - bash build/ci/build-manifest_test.sh
       - bash build/ci/node-commands_test.sh
+      - bash build/kernel/clone_test.sh
       - bash build/kernel/profiles_test.sh
       - bash build/release/assets_test.sh
       - bash build/release/check-unsigned_test.sh

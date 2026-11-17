@@ -27,9 +27,12 @@ export KBUILD_BUILD_USER=cryptos KBUILD_BUILD_HOST=cryptos
 # is permanent. Shallow-clone exactly the pinned tag. Integrity is anchored to
 # the tag; commit-level pinning is a future hardening.
 src="$work/linux-${KERNEL_VERSION}"
+# git.kernel.org times out from hosted runners now and then, so the clone
+# retries and the source can be a mirror (KERNEL_GIT_URL): see clone.sh.
 if [ ! -d "$src" ]; then
-  git clone --depth 1 --branch "v${KERNEL_VERSION}" \
-    https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git "$src"
+  # shellcheck source=build/kernel/clone.sh
+  source "$here/clone.sh"
+  kernel_clone "$KERNEL_VERSION" "$src"
 fi
 
 case "$arch" in
