@@ -1,9 +1,9 @@
 module github.com/CryptOS-PKI/cryptos-appliance
 
-go 1.26.10
+go 1.26.11
 
 require (
-	github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.1.0.20261102142030-c4aea0fb6c4d
+	github.com/CryptOS-PKI/cryptos-node v0.1.0-rc.1.0.20261115200417-5e0f370b475c
 	github.com/google/go-tpm v0.9.8
 	github.com/google/go-tpm-tools v0.4.8
 	github.com/spf13/cobra v1.10.2
@@ -39,7 +39,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
-	github.com/klauspost/compress v1.18.7 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
