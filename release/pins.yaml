@@ -1,5 +1,5 @@
 version: 1
-release: v0.1.0-rc.2
+release: v0.1.0-rc.3
 repos:
   cryptos-node:     {commit: 25a59f73ef460dd63c291f8062d56f7a38f89c8d}
   cryptos-manager:  {commit: ded0a4ff9c22159209267d1d4d96584fc0850a93}
