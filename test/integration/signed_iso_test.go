@@ -369,6 +369,7 @@ func isoStepInstall(t *testing.T, s *suite, st *isoState) {
 		}
 		return true, ""
 	})
+	isoStepRefusal(t, s, st, installCfg, maint)
 	installed := time.Now()
 	out := mustRun(t, s.env.cryptosctl, append(maint, "config", "apply", "-f", installCfg)...)
 	t.Logf("config apply in maintenance mode:\n%s", out)
