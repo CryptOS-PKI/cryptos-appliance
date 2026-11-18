@@ -60,7 +60,10 @@ EFI stub). See `.github/workflows/ci-image.yml` for the exact apt list.
 
 - `KERNEL_VERSION` in `ci/versions.env` — the kernel is shallow-cloned from the
   matching stable git tag `v${KERNEL_VERSION}` (no tarball checksum to maintain;
-  the git tag is the source of truth).
+  the git tag is the source of truth). The clone retries (`KERNEL_CLONE_ATTEMPTS`,
+  default 4, `KERNEL_CLONE_PAUSE` seconds apart, default 15) because git.kernel.org
+  sometimes times out from hosted runners. `KERNEL_GIT_URL` replaces the source
+  with a mirror of the stable tree; the tag it serves is still the pinned one.
 - `CRYPTSETUP_STATIC` — optional override; defaults to the from-source
   static `cryptsetup` produced by `task cryptsetup:build` (Docker required).
 - `MKFS_EXT4_STATIC` — optional override; defaults to the from-source
